@@ -35,7 +35,7 @@ where
     (path, app.route(&new_path, get(handler)))
 }
 
-// POST 라우터 빌더
+
 pub fn post_router_builder<T, S>(
     path: String,
     handler: impl Handler<T, S>  + Clone + Send + 'static
@@ -78,14 +78,8 @@ mod tests {
             "/hello".to_string(),
             hello_handler
         );
-
-
         assert_eq!(path, "/hello");
-
-
         let app = Router::new().merge(router);
-
-
 
         let request = Request::builder()
             .uri("/hello")

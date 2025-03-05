@@ -5,6 +5,7 @@
       <sourceFolder url="file://$MODULE_DIR$/bin/turtle/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/database/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/net/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/service/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/sol/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>

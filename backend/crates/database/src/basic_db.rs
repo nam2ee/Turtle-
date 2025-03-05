@@ -5,14 +5,17 @@ use std::sync::{Arc, Mutex};
 use std::path::Path;
 
 // 스레드 안전한 데이터베이스 래퍼
-pub struct innerDatabase {
+pub struct InnerDatabase {
     db: Arc<Mutex<Database<WriteMap>>>,
 }
 
 pub trait SafeDatabase {
+
     fn new<P: AsRef<Path>>(path: P) -> Result<Self, libmdbx::Error> where Self: Sized;
 
     fn clone(&self) -> Self where Self: Sized;
+
+
 
     // 트레이트 메서드에 pub 키워드 제거 (트레이트 자체가 pub이므로 메서드도 pub)
     fn write(&self, key: &str, value: &str, table: &str) -> Result<(), libmdbx::Error>;
@@ -28,7 +31,7 @@ pub trait SafeDatabase {
 }
 
 
-impl SafeDatabase for innerDatabase{
+impl SafeDatabase for InnerDatabase{
 
     fn new<P: AsRef<Path>>(path: P) -> Result<Self, libmdbx::Error> {
         let mut options = DatabaseOptions::default();
@@ -46,6 +49,7 @@ impl SafeDatabase for innerDatabase{
         }
     }
 
+
     fn write(&self, key: &str, value: &str, table: &str) -> Result<(), libmdbx::Error> {
         let db = self.db.lock().expect("Failed to lock database mutex");
         let transaction = db.begin_rw_txn()?;
@@ -62,8 +66,8 @@ impl SafeDatabase for innerDatabase{
         let transaction = db.begin_ro_txn()?;
 
         if let Ok(table) = transaction.open_table(Some(table)) {
-            let result = transaction.get(&table, key.into())?;
-            return Ok(result.map(|v| v.to_vec()));
+            let result = transaction.get(&table, key.as_bytes())?;
+            return Ok(result);
         }
 
         Ok(None)
