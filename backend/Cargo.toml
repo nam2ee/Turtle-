@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bin/turtle" , "crates/database", "crates/sol"]
+members = ["bin/turtle" , "crates/database", "crates/net", "crates/sol"]
 
 
 
@@ -10,3 +10,4 @@ bs58 = "0.5.1"
 tokio-tungstenite = "0.26.2"
 tokio = { version = "1.43.0" , features = ["full"] }
 libmdbx = "0.5.3"
+axum = "0.8.1"

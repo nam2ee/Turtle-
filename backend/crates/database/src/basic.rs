@@ -1,44 +1,112 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 use libmdbx::{Database, DatabaseOptions, WriteMap, WriteFlags, TableFlags};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::path::Path;
 
-fn open_db(path: &str) -> Result<Database<WriteMap>, libmdbx::Error>{
-    let mut options = DatabaseOptions::default();
-    options.max_tables = Some(100);
-    Database::<WriteMap>::open_with_options(path,options)
+// 스레드 안전한 데이터베이스 래퍼
+pub struct innerDatabase {
+    db: Arc<Mutex<Database<WriteMap>>>,
 }
 
-pub fn write_db(path:&str, key:&str, value: &str, table: &str) -> Result< (), libmdbx::Error>{
-    let db = open_db(path)?;
-    let transaction = db.begin_rw_txn()?;
-    let table = transaction.create_table(Some(table), TableFlags::default())?;
-    println!("Hi!");
-    let _write_result = transaction.put(&table, key, value, WriteFlags::default())?;
-    //TODO! what is the WriteFlags::APPEND?
+pub trait SafeDatabase {
+    fn new<P: AsRef<Path>>(path: P) -> Result<Self, libmdbx::Error> where Self: Sized;
 
-    transaction.commit()?;
+    fn clone(&self) -> Self where Self: Sized;
 
-    Ok(())
+    // 트레이트 메서드에 pub 키워드 제거 (트레이트 자체가 pub이므로 메서드도 pub)
+    fn write(&self, key: &str, value: &str, table: &str) -> Result<(), libmdbx::Error>;
+
+    fn read(&self, key: &str, table: &str) -> Result<Option<Vec<u8>>, libmdbx::Error>;
+
+    fn read_all(&self, table: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, libmdbx::Error>;
+
+    fn batch_write<K, V>(&self, items: &[(K, V)], table: &str) -> Result<(), libmdbx::Error>
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]>;
 }
 
-pub fn read_db(path: &str, table: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, libmdbx::Error> {
-    let mut map = HashMap::new();
-    let db = open_db(path)?;
-    let transaction = db.begin_ro_txn()?;
 
-    if let Ok(table) = transaction.open_table(Some(table)) {
-        let cursor = transaction.cursor(&table)?;
+impl SafeDatabase for innerDatabase{
 
-        for item in cursor {
-            let (key, value) = item?;
-            let key_owned = key.to_vec();
-            let value_owned = value.to_vec();
-            map.insert(key_owned, value_owned);
+    fn new<P: AsRef<Path>>(path: P) -> Result<Self, libmdbx::Error> {
+        let mut options = DatabaseOptions::default();
+        options.max_tables = Some(100);
+        let db = Database::<WriteMap>::open_with_options(path, options)?;
+
+        Ok(Self {
+            db: Arc::new(Mutex::new(db)),
+        })
+    }
+
+    fn clone(&self) -> Self {
+        Self {
+            db: Arc::clone(&self.db),
         }
     }
 
-    Ok(map)
+    fn write(&self, key: &str, value: &str, table: &str) -> Result<(), libmdbx::Error> {
+        let db = self.db.lock().expect("Failed to lock database mutex");
+        let transaction = db.begin_rw_txn()?;
+        let table = transaction.create_table(Some(table), TableFlags::default())?;
+
+        transaction.put(&table, key, value, WriteFlags::default())?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+
+    fn read(&self, key: &str, table: &str) -> Result<Option<Vec<u8>>, libmdbx::Error> {
+        let db = self.db.lock().expect("Failed to lock database mutex");
+        let transaction = db.begin_ro_txn()?;
+
+        if let Ok(table) = transaction.open_table(Some(table)) {
+            let result = transaction.get(&table, key.into())?;
+            return Ok(result.map(|v| v.to_vec()));
+        }
+
+        Ok(None)
+    }
+
+    fn read_all(&self, table: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, libmdbx::Error> {
+        let mut map = HashMap::new();
+        let db = self.db.lock().expect("Failed to lock database mutex");
+        let transaction = db.begin_ro_txn()?;
+
+        if let Ok(table) = transaction.open_table(Some(table)) {
+            let cursor = transaction.cursor(&table)?;
+
+            for item in cursor {
+                let (key, value) = item?;
+                let key_owned = key.to_vec();
+                let value_owned = value.to_vec();
+                map.insert(key_owned, value_owned);
+            }
+        }
+
+        Ok(map)
+    }
+
+
+    fn batch_write<K, V>(&self, items: &[(K, V)], table: &str) -> Result<(), libmdbx::Error>
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]>,
+    {
+        let db = self.db.lock().expect("Failed to lock database mutex");
+        let transaction = db.begin_rw_txn()?;
+        let table = transaction.create_table(Some(table), TableFlags::default())?;
+
+        for (key, value) in items {
+            transaction.put(&table, key, value, WriteFlags::default())?;
+        }
+
+        transaction.commit()?;
+        Ok(())
+    }
 }
+
 
 
 
@@ -62,26 +130,3 @@ pub fn read_db(path: &str, table: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, lib
 //}  ---> WARNING! : libmdbx using unsafe, so , If we set the lifetime like above,  there will be evoked dangling reference problem.
 
 
-#[cfg(test)]
-mod test{
-    use super::*;
-
-
-
-    #[test]
-    fn write() -> Result< (), libmdbx::Error>{
-        write_db("../../","Alice", "Hi!", "CHAT")?;
-
-
-        write_db("../../","Jake", "Hi!", "CHAT")?;
-
-        let map = read_db("../../",  "CHAT")?;
-
-        map.iter().for_each(|(key, value)| {
-            println!("{:?} , {:?}", String::from_utf8_lossy(key), String::from_utf8_lossy(value));
-        });
-
-        Ok(())
-    }
-
-}
