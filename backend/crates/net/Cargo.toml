@@ -5,4 +5,7 @@ edition = "2021"
 
 [dependencies]
 axum.workspace = true 
-tokio.workspace =  true 
+tokio.workspace =  true
+thiserror = "2.0.12"
+tower = "0.5.2"
+hyper = "1.6.0"
