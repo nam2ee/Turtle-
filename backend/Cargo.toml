@@ -13,3 +13,4 @@ libmdbx = "0.5.3"
 axum = {version = "0.8.1", features=["macros", "multipart"]}
 turtle-database = {path = "crates/database"}
 turtle-service = {path = "crates/service"}
+turtle-net = {path = "crates/net"}

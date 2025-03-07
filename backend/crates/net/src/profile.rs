@@ -1,10 +1,21 @@
-use axum::extract::{Multipart, State};
+use axum::extract::{Multipart, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use std::error::Error as StdError;
 use std::fmt;
+use axum::Json;
+use serde::{Deserialize, Serialize};
 use turtle_database::basic_db::{SafeDatabase};
 use turtle_service::parser::profile::UserProfile;
+
+// Query parameters struct for the get_profile_by_address endpoint
+#[derive(Deserialize)]
+pub struct AddressQuery {
+    address: String,
+}
+
+// Response struct for the get_profile_by_address endpoint
+
 
 #[derive(Debug)]
 pub enum ProfileError {
@@ -113,16 +124,65 @@ pub async fn profile_write<T: SafeDatabase>(
 }
 
 
+pub async fn get_profile_by_address<T: SafeDatabase>(
+    State(database): State<T>,
+    Query(query): Query<AddressQuery>,
+) -> Result<Json<UserProfile>, ProfileError> {
+    // Validate address
+    if query.address.is_empty() {
+        return Err(ProfileError::MultipartError("Address is required".to_string()));
+    }
+
+    // Try to read the profile from the database
+    let profile_data = database.read(&query.address, "user_profiles")
+        .map_err(|e| ProfileError::DatabaseError(e.to_string()))?;
+
+    // Check if the profile exists
+    if let Some(data) = profile_data {
+        // Parse the profile from JSON
+        let profile_str = String::from_utf8(data)
+            .map_err(|e| ProfileError::SerializationError(format!("Invalid UTF-8: {}", e)))?;
+
+        let profile: UserProfile = serde_json::from_str(&profile_str)
+            .map_err(|e| ProfileError::SerializationError(format!("Invalid JSON: {}", e)))?;
+
+        // Return the existing profile
+        Ok(Json(
+            profile))
+    } else {
+        // Create a default profile with only the address field
+        let default_profile = UserProfile {
+            user_id: String::new(),
+            user_name: String::new(),
+            user_address: query.address.clone(),
+            github_account: String::new(),
+            x_account: String::new(),
+            tg_account: String::new(),
+            user_bio: String::new(),
+            user_avatar: None,
+            avatar_content_type: None,
+        };
+
+        // Return the default profile
+        Ok(Json(default_profile))
+    }
+}
+
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
     use axum::extract::FromRequest;
     use axum::http::Request;
-    use std::path::PathBuf;
     use tempfile::tempdir;
     use turtle_database::basic_db::InnerDatabase;
     use turtle_service::parser::profile::UserProfile;
+
+    use axum::extract::Query;
+
 
     // 테스트용 멀티파트 바디 생성 함수
     fn create_multipart_body(fields: Vec<(&str, &str)>, file_field: Option<(&str, &str, &[u8])>) -> (String, Vec<u8>) {
@@ -317,4 +377,114 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_get_profile_by_address_existing() -> Result<(), Box<dyn std::error::Error>> {
+        // Create temporary directory
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_db");
+
+        // Initialize database
+        let db = InnerDatabase::new(&db_path)?;
+
+        // Create a test profile
+        let test_address = "0xabcdef123456789";
+        let test_profile = UserProfile {
+            user_id: "test_user".to_string(),
+            user_name: "Test User".to_string(),
+            user_address: test_address.to_string(),
+            github_account: "testuser".to_string(),
+            x_account: "@testuser".to_string(),
+            tg_account: "@test_user".to_string(),
+            user_bio: "This is a test bio".to_string(),
+            user_avatar: None,
+            avatar_content_type: None,
+        };
+
+        // Save the profile to the database
+        let profile_json = serde_json::to_string(&test_profile)?;
+        db.write(test_address, &profile_json, "user_profiles")?;
+
+        // Create query parameters
+        let query = AddressQuery {
+            address: test_address.to_string(),
+        };
+
+        // Call get_profile_by_address function
+        let result = get_profile_by_address(State(db), Query(query)).await?;
+
+        // Check the result
+        let response = result.0;
+        assert!(response.exists);
+        assert_eq!(response.profile.user_id, "test_user");
+        assert_eq!(response.profile.user_name, "Test User");
+        assert_eq!(response.profile.user_address, test_address);
+        assert_eq!(response.profile.github_account, "testuser");
+        assert_eq!(response.profile.x_account, "@testuser");
+        assert_eq!(response.profile.tg_account, "@test_user");
+        assert_eq!(response.profile.user_bio, "This is a test bio");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_profile_by_address_nonexistent() -> Result<(), Box<dyn std::error::Error>> {
+        // Create temporary directory
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_db");
+
+        // Initialize database
+        let db = InnerDatabase::new(&db_path)?;
+
+        // Create query parameters for a non-existent address
+        let test_address = "0xnonexistent123";
+        let query = AddressQuery {
+            address: test_address.to_string(),
+        };
+
+        // Call get_profile_by_address function
+        let result = get_profile_by_address(State(db), Query(query)).await?;
+
+        // Check the result
+        let response = result.0;
+        assert!(!response.exists);
+        assert_eq!(response.profile.user_address, test_address);
+        assert!(response.profile.user_id.is_empty());
+        assert!(response.profile.user_name.is_empty());
+        assert!(response.profile.github_account.is_empty());
+        assert!(response.profile.x_account.is_empty());
+        assert!(response.profile.tg_account.is_empty());
+        assert!(response.profile.user_bio.is_empty());
+        assert!(response.profile.user_avatar.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_profile_by_address_empty_address() -> Result<(), Box<dyn std::error::Error>> {
+        // Create temporary directory
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_db");
+
+        // Initialize database
+        let db = InnerDatabase::new(&db_path)?;
+
+        // Create query parameters with an empty address
+        let query = AddressQuery {
+            address: "".to_string(),
+        };
+
+        // Call get_profile_by_address function
+        let result = get_profile_by_address(State(db), Query(query)).await;
+
+        // Check that it returns an error
+        match result {
+            Err(ProfileError::MultipartError(msg)) => {
+                assert_eq!(msg, "Address is required");
+                Ok(())
+            },
+            _ => Err("Expected MultipartError with 'Address is required' message".into()),
+        }
+    }
+
 }
