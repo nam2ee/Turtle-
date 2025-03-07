@@ -7,15 +7,15 @@ use std::fmt::Debug;
 
 
 
-fn main_router<STATE, S2>(components: Vec<(String,Router<STATE>)>, state: STATE) -> Router<S2>
+pub fn main_router<STATE>(components: Vec<(String, Router<STATE>)>, state: STATE) -> Router
 where
     STATE: Clone + Send + Sync + 'static
 {
     let mut app = Router::<STATE>::new();
 
-    let result = components.into_iter().for_each(  |(path, router)| {
-     app = app.clone().nest(&path, router);
-    });
+    for (_, router) in components {
+        app = app.merge(router);
+    }
 
     app.with_state(state)
 }

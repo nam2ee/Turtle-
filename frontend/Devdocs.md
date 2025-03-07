@@ -221,3 +221,30 @@ The following components in the frontend need to be connected to these endpoints
 5. `CommunityCard.tsx` - Handles deposit to community functionality
 6. `PostDetailModal.tsx` - Handles post interaction (likes)
 7. `CountdownTimer.tsx` - Tracks time remaining and triggers bounty award
+
+
+
+
+
+
+
+⏺ I've now integrated the frontend with the backend profile management system. Here's a summary of the changes made:
+
+  1. Created an API configuration (config/api.ts) to define the backend URL and endpoints
+  2. Built an API service (services/api.ts) with functions to:
+    - Save profile data to the backend using a multipart form request
+    - Retrieve profile data from the backend by wallet address
+  3. Updated the ProfileSetupModal component to:
+    - Accept initial profile data
+    - Convert and send profile data to the backend in the correct format
+    - Handle both success and error cases gracefully
+  4. Enhanced the ProfileButton component to:
+    - Load the user's profile from the backend when their wallet connects
+    - Show loading state during profile retrieval
+    - Pass the retrieved profile to the modal for editing
+
+  The implementation maps the frontend's ProfileData type to the backend's UserProfile struct, using the wallet address as the key in the
+  database. When a user opens the profile modal, it will be pre-filled with their saved data if available. When they save changes, the data is
+  sent to the backend and stored persistently.
+
+  This integration should now allow users to create, edit, and retrieve their profiles properly with your backend implementation.

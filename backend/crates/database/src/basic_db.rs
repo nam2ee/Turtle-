@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::path::Path;
 
-// 스레드 안전한 데이터베이스 래퍼
+#[derive(Clone)]
 pub struct InnerDatabase {
     db: Arc<Mutex<Database<WriteMap>>>,
 }
