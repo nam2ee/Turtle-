@@ -43,10 +43,7 @@ The Turtle DAO program implements a time-based bounty system where:
 
 ```bash
 # Build the program
-cargo build-bpf
-
-# Run tests
-cargo test-bpf
+cargo build-spf
 ```
 
 ## Integration with Frontend
