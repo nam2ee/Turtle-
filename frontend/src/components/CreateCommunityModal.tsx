@@ -215,68 +215,67 @@ export function CreateCommunityModal({ isOpen, onClose, onSubmit }: CreateCommun
   };
 
   // 예치금 전송 함수
-// 예치금 전송 함수
-const depositToNewCommunity = async (pdaString: string, amount: number) => {
-  if (!wallet.publicKey || !wallet.signTransaction) {
-    throw new Error("지갑이 연결되어 있지 않습니다.");
-  }
-  
-  try {
-    // 1. PublicKey 객체 생성
-    const daoPda = new PublicKey(pdaString);
+  const depositToNewCommunity = async (pdaString: string, amount: number) => {
+    if (!wallet.publicKey || !wallet.signTransaction) {
+      throw new Error("지갑이 연결되어 있지 않습니다.");
+    }
     
-    // 2. 솔라나 연결 설정
-    const connection = new Connection("https://api.devnet.solana.com", "confirmed");
-    
-    // 3. 예치 명령어 생성
-    const depositInstruction = createDepositInstruction(
-      wallet.publicKey,
-      daoPda,
-      amount
-    );
-    
-    // 디버깅용
-    logBuffer(depositInstruction.data, "예치 명령 데이터");
-    
-    // 4. 트랜잭션 생성
-    const transaction = new Transaction();
-    
-    // 5. 최근 블록해시 가져오기 (트랜잭션 만료시간 설정) - 이 부분이 누락됨
-    const { blockhash } = await connection.getLatestBlockhash();
-    transaction.recentBlockhash = blockhash;
-    transaction.feePayer = wallet.publicKey;
-    
-    // 6. 인스트럭션 추가
-    transaction.add(depositInstruction);
-    
-    // 7. 트랜잭션 서명
-    const signedTransaction = await wallet.signTransaction(transaction);
-    
-    // 8. 트랜잭션 전송 및 확인
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize());
-    await connection.confirmTransaction(signature);
-    
-    console.log(`${amount / LAMPORTS_PER_SOL} SOL 예치 완료, 트랜잭션 ID:`, signature);
-    
-    // 9. 백엔드에 예치자 정보 저장
-    const currentTime = Math.floor(Date.now() / 1000);
-    const lockPeriod = timeLimit * 60; // timeLimit(분)을 초 단위로 변환
-    
-    const depositorData: DepositorData = {
-      pubkey: wallet.publicKey.toString(),
-      amount: amount,
-      locked_until: currentTime + lockPeriod,
-      voting_power: amount
-    };
-    
-    await axios.post(`http://localhost:8080/api/dao/depositor?pda=${pdaString}`, depositorData);
-    
-    return signature;
-  } catch (err) {
-    console.error("예치금 처리 중 오류 발생:", err);
-    throw new Error("예치금 처리에 실패했습니다.");
-  }
-};
+    try {
+      // 1. PublicKey 객체 생성
+      const daoPda = new PublicKey(pdaString);
+      
+      // 2. 솔라나 연결 설정
+      const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+      
+      // 3. 예치 명령어 생성
+      const depositInstruction = createDepositInstruction(
+        wallet.publicKey,
+        daoPda,
+        amount
+      );
+      
+      // 디버깅용
+      logBuffer(depositInstruction.data, "예치 명령 데이터");
+      
+      // 4. 트랜잭션 생성
+      const transaction = new Transaction();
+      
+      // 5. 최근 블록해시 가져오기 (트랜잭션 만료시간 설정) - 이 부분이 누락됨
+      const { blockhash } = await connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = wallet.publicKey;
+      
+      // 6. 인스트럭션 추가
+      transaction.add(depositInstruction);
+      
+      // 7. 트랜잭션 서명
+      const signedTransaction = await wallet.signTransaction(transaction);
+      
+      // 8. 트랜잭션 전송 및 확인
+      const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+      await connection.confirmTransaction(signature);
+      
+      console.log(`${amount / LAMPORTS_PER_SOL} SOL 예치 완료, 트랜잭션 ID:`, signature);
+      
+      // 9. 백엔드에 예치자 정보 저장
+      const currentTime = Math.floor(Date.now() / 1000);
+      const lockPeriod = timeLimit * 60; // timeLimit(분)을 초 단위로 변환
+      
+      const depositorData: DepositorData = {
+        pubkey: wallet.publicKey.toString(),
+        amount: amount,
+        locked_until: currentTime + lockPeriod,
+        voting_power: amount
+      };
+      
+      await axios.post(`http://localhost:8080/api/dao/depositor?pda=${pdaString}`, depositorData);
+      
+      return signature;
+    } catch (err) {
+      console.error("예치금 처리 중 오류 발생:", err);
+      throw new Error("예치금 처리에 실패했습니다.");
+    }
+  };
 
   
   // 커뮤니티 생성 및 예치금 처리 함수
@@ -398,43 +397,46 @@ const depositToNewCommunity = async (pdaString: string, amount: number) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+      <div className="bg-white border-4 border-black max-w-3xl w-full max-h-[90vh] overflow-y-auto font-silkscreen">
         <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold">새 커뮤니티 생성</h2>
-            <Button onClick={onClose}>
-              닫기
-            </Button>
+          <div className="flex justify-between items-center mb-6 border-b-4 border-black pb-4">
+            <h2 className="text-2xl font-bold uppercase text-black">NEW COMMUNITY</h2>
+            <button 
+              onClick={onClose}
+              className="bg-red-500 text-black border-4 border-black px-4 py-2 hover:bg-red-600 uppercase font-bold"
+            >
+              X
+            </button>
           </div>
 
           <form onSubmit={handleSubmit}>
             {/* 기본 정보 섹션 */}
             <div className="space-y-4 mb-6">
               <div>
-                <label className="block mb-2 font-medium">커뮤니티 이름</label>
+                <label className="block mb-2 font-bold uppercase text-black">NAME</label>
                 <input
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border rounded-md"
+                  className="w-full px-3 py-2 border-4 border-black bg-blue-100 focus:bg-blue-50 uppercase text-black"
                 />
               </div>
               
               <div>
-                <label className="block mb-2 font-medium">설명</label>
+                <label className="block mb-2 font-bold uppercase text-black">DESCRIPTION</label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={3}
                   required
-                  className="w-full px-3 py-2 border rounded-md"
+                  className="w-full px-3 py-2 border-4 border-black bg-blue-100 focus:bg-blue-50 uppercase text-black"
                 />
               </div>
 
               <div>
-                <label className="block mb-2 font-medium">예치금 (SOL)</label>
-                <div className="flex items-center gap-4">
+                <label className="block mb-2 font-bold uppercase text-black">BOUNTY (SOL)</label>
+                <div className="flex items-center gap-4 bg-blue-100 border-4 border-black p-3">
                   <input
                     type="range"
                     min="0.1"
@@ -442,15 +444,15 @@ const depositToNewCommunity = async (pdaString: string, amount: number) => {
                     step="0.1"
                     value={bountyAmount}
                     onChange={(e) => setBountyAmount(parseFloat(e.target.value))}
-                    className="flex-grow"
+                    className="flex-grow h-4 accent-blue-500"
                   />
-                  <span className="w-16 text-right">{bountyAmount} SOL</span>
+                  <span className="w-20 text-right bg-yellow-300 border-4 border-black p-1 text-black">{bountyAmount} SOL</span>
                 </div>
               </div>
 
               <div>
-                <label className="block mb-2 font-medium">시간 제한 (분)</label>
-                <div className="flex items-center gap-4">
+                <label className="block mb-2 font-bold uppercase text-black">TIME LIMIT (MIN)</label>
+                <div className="flex items-center gap-4 bg-blue-100 border-4 border-black p-3">
                   <input
                     type="range"
                     min="1"
@@ -458,15 +460,15 @@ const depositToNewCommunity = async (pdaString: string, amount: number) => {
                     step="1"
                     value={timeLimit}
                     onChange={(e) => setTimeLimit(parseInt(e.target.value))}
-                    className="flex-grow"
+                    className="flex-grow h-4 accent-blue-500"
                   />
-                  <span className="w-16 text-right">{timeLimit} 분</span>
+                  <span className="w-20 text-right bg-green-300 border-4 border-black p-1 text-black">{timeLimit} MIN</span>
                 </div>
               </div>
 
               <div>
-                <label className="block mb-2 font-medium">기본 수수료 (%)</label>
-                <div className="flex items-center gap-4">
+                <label className="block mb-2 font-bold uppercase text-black">BASE FEE (%)</label>
+                <div className="flex items-center gap-4 bg-blue-100 border-4 border-black p-3">
                   <input
                     type="range"
                     min="1"
@@ -474,145 +476,151 @@ const depositToNewCommunity = async (pdaString: string, amount: number) => {
                     step="1"
                     value={baseFee * 100}
                     onChange={(e) => setBaseFee(parseInt(e.target.value) / 100)}
-                    className="flex-grow"
+                    className="flex-grow h-4 accent-blue-500"
                   />
-                  <span className="w-16 text-right">{(baseFee * 100).toFixed(0)}%</span>
+                  <span className="w-20 text-right bg-red-300 border-4 border-black p-1 text-black">{(baseFee * 100).toFixed(0)}%</span>
                 </div>
               </div>
             </div>
 
             {/* 소셜 연결 섹션 */}
-            <div className="border-t pt-6 mb-6">
-              <h3 className="text-lg font-medium mb-4">소셜 연결 (선택 사항)</h3>
+            <div className="border-t-4 border-black pt-6 mb-6">
+              <h3 className="text-lg font-bold mb-4 uppercase text-black">SOCIAL CONNECT</h3>
               
               <div className="space-y-4">
                 {/* GitHub */}
-                <div className="flex items-center gap-4">
-                  <span>GitHub:</span>
+                <div className="flex items-center gap-4 bg-gray-100 border-4 border-black p-3">
+                  <span className="uppercase text-black">GITHUB:</span>
                   {isGithubConnected ? (
                     <div className="flex-grow flex items-center gap-2">
                       <input
                         type="text"
                         value={githubUsername}
                         onChange={(e) => setGithubUsername(e.target.value)}
-                        placeholder="GitHub 사용자명"
-                        className="flex-grow px-3 py-2 border rounded-md"
+                        placeholder="GITHUB USERNAME"
+                        className="flex-grow px-3 py-2 border-4 border-black uppercase text-black"
                       />
-                      <Button
+                      <button
                         type="button"
                         onClick={() => setIsGithubConnected(false)}
+                        className="bg-red-500 text-black border-4 border-black px-4 py-2 uppercase font-bold"
                       >
-                        취소
-                      </Button>
+                        X
+                      </button>
                     </div>
                   ) : (
-                    <Button
+                    <button
                       type="button"
                       onClick={() => setIsGithubConnected(true)}
+                      className="bg-green-500 text-black border-4 border-black px-4 py-2 hover:bg-green-600 uppercase font-bold"
                     >
-                      GitHub 연결
-                    </Button>
+                      CONNECT
+                    </button>
                   )}
                 </div>
                 
                 {/* Twitter */}
-                <div className="flex items-center gap-4">
-                  <span>Twitter:</span>
+                <div className="flex items-center gap-4 bg-gray-100 border-4 border-black p-3">
+                  <span className="uppercase text-black">TWITTER:</span>
                   {isTwitterConnected ? (
                     <div className="flex-grow flex items-center gap-2">
                       <input
                         type="text"
                         value={twitterUsername}
                         onChange={(e) => setTwitterUsername(e.target.value)}
-                        placeholder="Twitter 사용자명"
-                        className="flex-grow px-3 py-2 border rounded-md"
+                        placeholder="TWITTER USERNAME"
+                        className="flex-grow px-3 py-2 border-4 border-black uppercase text-black"
                       />
-                      <Button
+                      <button
                         type="button"
                         onClick={() => setIsTwitterConnected(false)}
+                        className="bg-red-500 text-black border-4 border-black px-4 py-2 uppercase font-bold"
                       >
-                        취소
-                      </Button>
+                        X
+                      </button>
                     </div>
                   ) : (
-                    <Button
+                    <button
                       type="button"
                       onClick={() => setIsTwitterConnected(true)}
+                      className="bg-blue-500 text-black border-4 border-black px-4 py-2 hover:bg-blue-600 uppercase font-bold"
                     >
-                      Twitter 연결
-                    </Button>
+                      CONNECT
+                    </button>
                   )}
                 </div>
                 
                 {/* Telegram */}
-                <div className="flex items-center gap-4">
-                  <span>Telegram:</span>
+                <div className="flex items-center gap-4 bg-gray-100 border-4 border-black p-3">
+                  <span className="uppercase text-black">TELEGRAM:</span>
                   {isTelegramConnected ? (
                     <div className="flex-grow flex items-center gap-2">
                       <input
                         type="text"
                         value={telegramUsername}
                         onChange={(e) => setTelegramUsername(e.target.value)}
-                        placeholder="Telegram 사용자명"
-                        className="flex-grow px-3 py-2 border rounded-md"
+                        placeholder="TELEGRAM USERNAME"
+                        className="flex-grow px-3 py-2 border-4 border-black uppercase text-black"
                       />
-                      <Button
+                      <button
                         type="button"
                         onClick={() => setIsTelegramConnected(false)}
+                        className="bg-red-500 text-black border-4 border-black px-4 py-2 uppercase font-bold"
                       >
-                        취소
-                      </Button>
+                        X
+                      </button>
                     </div>
                   ) : (
-                    <Button
+                    <button
                       type="button"
                       onClick={() => setIsTelegramConnected(true)}
+                      className="bg-cyan-500 text-black border-4 border-black px-4 py-2 hover:bg-cyan-600 uppercase font-bold"
                     >
-                      Telegram 연결
-                    </Button>
+                      CONNECT
+                    </button>
                   )}
                 </div>
               </div>
             </div>
 
             {/* 프로필 이미지 섹션 */}
-            <div className="border-t pt-6 mb-6">
-              <h3 className="text-lg font-medium mb-4">프로필 이미지 (선택 사항)</h3>
+            <div className="border-t-4 border-black pt-6 mb-6">
+              <h3 className="text-lg font-bold mb-4 uppercase text-black">PROFILE IMAGE</h3>
               
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-full overflow-hidden border">
+              <div className="flex items-center gap-4 bg-gray-100 border-4 border-black p-3">
+                <div className="w-16 h-16 border-4 border-black overflow-hidden">
                   {profileImage ? 
                     <img src={profileImage} alt="Profile" className="w-full h-full object-cover" /> : 
-                    <div className="bg-gray-200 w-full h-full flex items-center justify-center">
-                      <span>사진</span>
+                    <div className="bg-gray-300 w-full h-full flex items-center justify-center">
+                      <span className="uppercase text-black">IMG</span>
                     </div>
                   }
                 </div>
                 
                 <input
                   type="text"
-                  placeholder="이미지 URL 입력"
+                  placeholder="IMAGE URL"
                   value={profileImage}
                   onChange={(e) => setProfileImage(e.target.value)}
-                  className="flex-grow px-3 py-2 border rounded-md"
+                  className="flex-grow px-3 py-2 border-4 border-black uppercase text-black"
                 />
               </div>
             </div>
 
             {/* 지갑 연결 상태 */}
-            <div className="border-t pt-6 mb-6">
-              <h3 className="text-lg font-medium mb-4">지갑 연결 상태</h3>
+            <div className="border-t-4 border-black pt-6 mb-6">
+              <h3 className="text-lg font-bold mb-4 uppercase text-black">WALLET STATUS</h3>
               
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 bg-gray-100 border-4 border-black p-3">
                 {wallet.connected ? (
                   <>
-                    <div className="bg-green-500 rounded-full h-3 w-3"></div>
-                    <span>연결됨: {wallet.publicKey?.toString().slice(0, 6)}...{wallet.publicKey?.toString().slice(-4)}</span>
+                    <div className="bg-green-500 h-6 w-6 border-4 border-black"></div>
+                    <span className="uppercase text-black">CONNECTED: {wallet.publicKey?.toString().slice(0, 6)}...{wallet.publicKey?.toString().slice(-4)}</span>
                   </>
                 ) : (
                   <>
-                    <div className="bg-red-500 rounded-full h-3 w-3"></div>
-                    <span>연결되지 않음</span>
+                    <div className="bg-red-500 h-6 w-6 border-4 border-black"></div>
+                    <span className="uppercase text-black">NOT CONNECTED</span>
                   </>
                 )}
               </div>
@@ -620,22 +628,34 @@ const depositToNewCommunity = async (pdaString: string, amount: number) => {
 
             {/* 오류 메시지 */}
             {error && (
-              <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-6">
-                {error}
-              </div>
+              <div className="bg-red-300 border-4 border-black px-4 py-3 mb-6">
+                <span className="uppercase font-bold text-black">{error}</span>
+                </div>
             )}
 
             {/* 제출 버튼 */}
-            <div className="flex justify-end gap-4">
-              <Button type="button" onClick={onClose}>
-                취소
-              </Button>
-              <Button 
+            <div className="flex justify-end gap-4 border-t-4 border-black pt-6">
+              <button 
+                type="button" 
+                onClick={onClose}
+                className="bg-gray-300 border-4 border-black px-6 py-3 hover:bg-gray-400 uppercase font-bold text-black"
+              >
+                CANCEL
+              </button>
+              <button 
                 type="submit" 
                 disabled={isLoading || !wallet.connected}
+                className={`
+                  border-4 border-black px-6 py-3 uppercase font-bold text-black
+                  ${!wallet.connected 
+                    ? 'bg-gray-300 cursor-not-allowed' 
+                    : isLoading 
+                      ? 'bg-yellow-300 cursor-wait'
+                      : 'bg-green-500 hover:bg-green-600'}
+                `}
               >
-                {isLoading ? "처리 중..." : "커뮤니티 생성"}
-              </Button>
+                {isLoading ? "PROCESSING..." : "CREATE COMMUNITY"}
+              </button>
             </div>
           </form>
         </div>
