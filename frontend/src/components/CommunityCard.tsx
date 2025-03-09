@@ -1,65 +1,83 @@
-"use client";
-
-import { Button } from "./Button";
-
-type CommunityCardProps = {
-  name: string;
-  description: string;
-  bountyAmount: number;
-  gradient: string;
-  onDeposit?: (e: React.MouseEvent) => void;
-  isPixelMode?: boolean;
-};
-
 export function CommunityCard({
   name,
   description,
   bountyAmount,
   gradient,
+  isPixelMode,
   onDeposit,
-  isPixelMode = false,
-}: CommunityCardProps) {
-  if (isPixelMode) {
-    return (
-      <div className="bg-white border-4 border-black overflow-hidden hover:translate-y-[-4px] transition-all duration-200">
-        <div className={`h-40 ${gradient} border-b-4 border-black`}></div>
-        <div className="p-5 font-silkscreen">
-          <h3 className="text-xl font-bold text-black uppercase">{name}</h3>
-          <p className="text-gray-800 text-sm mt-1">
-            {description}
-          </p>
-          <div className="flex justify-between items-center mt-4">
-            <span className="text-green-600 font-bold">{bountyAmount} SOL</span>
-            <button 
-              onClick={onDeposit}
-              className="border-2 border-black bg-green-500 hover:bg-green-600 text-white px-4 py-1 text-sm uppercase font-bold flex items-center"
-            >
-              <span className="mr-1">💰</span> Deposit
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  lastActivityTimeFormatted // 새로운 prop 추가
+}) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow">
-      <div className={`h-40 ${gradient}`}></div>
-      <div className="p-5">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">{name}</h3>
-        <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
+    <div className={`
+      h-full
+      ${isPixelMode 
+        ? 'border-4 border-black' 
+        : 'rounded-xl shadow-md'
+      }
+      ${gradient} overflow-hidden
+    `}>
+      <div className={`
+        p-6 h-full flex flex-col
+        ${isPixelMode ? 'bg-white border-b-4 border-black' : 'bg-white/90 dark:bg-gray-800/90'}
+      `}>
+        <h3 className={`
+          text-xl font-bold mb-2
+          ${isPixelMode ? 'font-silkscreen text-teal-800' : 'text-teal-900 dark:text-teal-200'}
+        `}>
+          {name}
+        </h3>
+        
+        <p className={`
+          mb-4 flex-grow
+          ${isPixelMode ? 'font-silkscreen text-sm text-teal-700' : 'text-teal-700 dark:text-teal-400'}
+        `}>
           {description}
         </p>
-        <div className="flex justify-between items-center mt-4">
-          <span className="text-green-600 dark:text-green-400 font-semibold">{bountyAmount} SOL Bounty</span>
-          <Button 
-            variant="primary" 
-            size="sm" 
-            onClick={onDeposit ? (e) => onDeposit(e as React.MouseEvent) : undefined}
-            className="flex items-center gap-1"
-          >
-            <span>💰</span> Deposit
-          </Button>
+        
+        <div className="mt-auto">
+          {/* 마지막 활동 시간 표시 */}
+          <div className="mb-3">
+            <span className={`
+              text-xs
+              ${isPixelMode ? 'font-silkscreen text-teal-600' : 'text-teal-600 dark:text-teal-500'}
+            `}>
+              Last Activity:
+            </span>
+            <p className={`
+              text-sm font-medium
+              ${isPixelMode ? 'font-silkscreen text-teal-800' : 'text-teal-800 dark:text-teal-300'}
+            `}>
+              {lastActivityTimeFormatted}
+            </p>
+          </div>
+          
+          <div className="flex items-center justify-between">
+            <div>
+              <span className={`
+                text-xs
+                ${isPixelMode ? 'font-silkscreen text-teal-600' : 'text-teal-600 dark:text-teal-500'}
+              `}>
+                Total Bounty
+              </span>
+              <p className={`
+                text-lg font-bold
+                ${isPixelMode ? 'font-silkscreen text-teal-800' : 'text-teal-800 dark:text-teal-300'}
+              `}>
+                {bountyAmount.toFixed(2)} SOL
+              </p>
+            </div>
+            
+            <button
+              onClick={onDeposit}
+              className={`
+                ${isPixelMode 
+                  ? 'border-2 border-black bg-teal-500 hover:bg-teal-600 text-white px-4 py-1 text-sm font-silkscreen' 
+                  : 'bg-teal-600 hover:bg-teal-700 text-white px-3 py-1 rounded-md text-sm'}
+              `}
+            >
+              Deposit
+            </button>
+          </div>
         </div>
       </div>
     </div>
