@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Button } from "@/components/Button";
@@ -9,132 +9,268 @@ import { CommunityCard } from "@/components/CommunityCard";
 import { CreateCommunityModal } from "@/components/CreateCommunityModal";
 import { WalletButton } from "@/components/WalletButton";
 import { SearchBar } from "@/components/SearchBar";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 
-// Mock data for communities
-// Adding createdAt and popularity fields for sorting
-const MOCK_COMMUNITIES = [
-  {
-    id: "1",
-    name: "Solana Developers",
-    description: "A community for Solana developers to share knowledge and resources.",
-    bountyAmount: 2.5,
-    gradient: "bg-gradient-to-r from-blue-400 to-purple-500",
-    timeLimit: "30 minutes",
-    baseFee: 0.05,
-    createdAt: "2025-03-01T10:00:00Z",
-    popularity: 87,
-  },
-  {
-    id: "2",
-    name: "NFT Artists",
-    description: "Share your NFT artwork and get feedback from other artists.",
-    bountyAmount: 1.8,
-    gradient: "bg-gradient-to-r from-yellow-400 to-orange-500",
-    timeLimit: "45 minutes",
-    baseFee: 0.02,
-    createdAt: "2025-03-02T15:30:00Z",
-    popularity: 62,
-  },
-  {
-    id: "3",
-    name: "DeFi Enthusiasts",
-    description: "Discuss DeFi projects, strategies, and news on Solana.",
-    bountyAmount: 3.2,
-    gradient: "bg-gradient-to-r from-green-400 to-teal-500",
-    timeLimit: "60 minutes",
-    baseFee: 0.1,
-    createdAt: "2025-02-28T19:45:00Z",
-    popularity: 91,
-  },
-  {
-    id: "4",
-    name: "Blockchain Gamers",
-    description: "Connect with other gamers building and playing on Solana's blockchain.",
-    bountyAmount: 2.7,
-    gradient: "bg-gradient-to-r from-red-400 to-pink-500",
-    timeLimit: "50 minutes",
-    baseFee: 0.07,
-    createdAt: "2025-03-01T22:15:00Z",
-    popularity: 74,
-  },
-  {
-    id: "5",
-    name: "Meme Coin Traders",
-    description: "Share insights and strategies for trading meme coins on Solana.",
-    bountyAmount: 4.2,
-    gradient: "bg-gradient-to-r from-indigo-400 to-blue-500",
-    timeLimit: "25 minutes",
-    baseFee: 0.15,
-    createdAt: "2025-03-03T08:20:00Z",
-    popularity: 95,
-  },
-  {
-    id: "6",
-    name: "SOL Developers Hub",
-    description: "Advanced development topics and best practices for Solana.",
-    bountyAmount: 5.0,
-    gradient: "bg-gradient-to-r from-purple-400 to-indigo-500",
-    timeLimit: "40 minutes",
-    baseFee: 0.2,
-    createdAt: "2025-02-27T14:30:00Z",
-    popularity: 83,
-  },
-  {
-    id: "7",
-    name: "Web3 UX/UI Designers",
-    description: "Community focused on creating better user experiences for Web3 applications.",
-    bountyAmount: 2.3,
-    gradient: "bg-gradient-to-r from-green-400 to-emerald-500",
-    timeLimit: "35 minutes",
-    baseFee: 0.04,
-    createdAt: "2025-02-25T09:15:00Z",
-    popularity: 68,
-  },
-  {
-    id: "8",
-    name: "Solana Hackathon Teams",
-    description: "Find teammates and collaborators for upcoming Solana hackathons.",
-    bountyAmount: 3.5,
-    gradient: "bg-gradient-to-r from-cyan-400 to-blue-500",
-    timeLimit: "55 minutes",
-    baseFee: 0.08,
-    createdAt: "2025-03-02T16:45:00Z",
-    popularity: 79,
-  },
-  {
-    id: "9",
-    name: "NFT Collectors Club",
-    description: "Discuss rare and valuable NFT collections in the Solana ecosystem.",
-    bountyAmount: 6.2,
-    gradient: "bg-gradient-to-r from-orange-400 to-red-500",
-    timeLimit: "65 minutes",
-    baseFee: 0.25,
-    createdAt: "2025-03-01T11:10:00Z",
-    popularity: 88,
-  },
-  {
-    id: "10",
-    name: "Solana Security Experts",
-    description: "Share knowledge on smart contract security and best practices.",
-    bountyAmount: 4.7,
-    gradient: "bg-gradient-to-r from-gray-600 to-gray-800",
-    timeLimit: "70 minutes",
-    baseFee: 0.3,
-    createdAt: "2025-02-28T13:25:00Z",
-    popularity: 76,
-  },
-];
+// API 호출 함수들
+// API 호출 함수들 - pdas 참조 제거
+const fetchAllPDAs = async () => {
+  const response = await fetch('http://localhost:8080/api/dao/pdas');
+  if (!response.ok) throw new Error('Failed to fetch PDAs');
+  return response.json();
+};
+
+
+
+const fetchCommunityDepositors = async (pda) => {
+  const response = await fetch(`http://localhost:8080/api/dao/depositors?pda=${pda}`);
+  if (!response.ok) throw new Error(`Failed to fetch depositors for PDA: ${pda}`);
+  return response.json();
+};
+
+const fetchCommunityInfo = async (pda) => {
+  const response = await fetch(`http://localhost:8080/api/dao/community?pda=${pda}`);
+  if (!response.ok) throw new Error(`Failed to fetch community info for PDA: ${pda}`);
+  return response.json();
+};
 
 export default function AppPage() {
   const { connected } = useWallet();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [joinedCommunities, setJoinedCommunities] = useState<string[]>([]);
+  const [joinedCommunities, setJoinedCommunities] = useState([]);
   const [isPixelMode] = useState(true); // Always use pixel mode
   const [currentPage, setCurrentPage] = useState(1);
   const communitiesPerPage = 6;
+  const [communities, setCommunities] = useState([]); // 이 줄 추가 또는 유지
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortOption, setSortOption] = useState<"recent" | "bounty" | "popularity">("recent");
+  const [sortOption, setSortOption] = useState("recent");
+  
+  // 데이터 상태 관리
+  const [pdas, setPdas] = useState([]);
+  const [communityInfoMap, setCommunityInfoMap] = useState({});
+  const [depositorsMap, setDepositorsMap] = useState({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
+  // 데이터 로딩
+
+  // 데이터 로딩
+// 데이터 로딩 방식 변경
+useEffect(() => {
+  const loadData = async () => {
+    try {
+      setIsLoading(true);
+      
+      // 1. PDA 목록 가져오기
+      const pdasResponse = await fetchAllPDAs();
+      console.log('PDA Response:', pdasResponse);
+      
+      const pdasArray = pdasResponse.pdas || [];
+      setPdas(pdasArray);
+      
+      // 2. 각 PDA에 대해 개별 커뮤니티 정보 가져오기
+      const communityDataMap = {};
+      const infoMap = {};
+      const depositorsData = {};
+      
+      // 병렬로 모든 요청 처리하기 위한 Promise 배열
+      const promises = pdasArray.map(async (pda) => {
+        try {
+          // 커뮤니티 기본 정보 가져오기 (communities API 대신 개별 호출)
+          const communityInfo = await fetchCommunityInfo(pda);
+          
+          // 기본 정보 및 상세 정보를 같은 객체에 저장
+          communityDataMap[pda] = {
+            ...communityInfo,
+            pda: pda // pda 정보 명시적으로 포함
+          };
+          
+          // 예치자 정보 별도로 가져오기
+          const depositorsResponse = await fetchCommunityDepositors(pda);
+          const depositors = depositorsResponse.depositors || [];
+          depositorsData[pda] = depositors;
+        } catch (err) {
+          console.error(`Error fetching data for PDA ${pda}:`, err);
+          // 오류가 발생해도 기본 객체 생성
+          communityDataMap[pda] = { pda };
+        }
+      });
+      
+      // 모든 API 호출이 완료될 때까지 기다림
+      await Promise.all(promises);
+      
+      // 상태 업데이트
+      setCommunityInfoMap(communityDataMap);
+      setDepositorsMap(depositorsData);
+      
+      // 더 이상 사용하지 않음
+      // setCommunities([...]);
+      
+      setIsLoading(false);
+    } catch (err) {
+      console.error("Error loading data:", err);
+      setError(err.message);
+      setIsLoading(false);
+    }
+  };
+  
+  if (connected) {
+    loadData();
+  }
+}, [connected]);
+
+
+
+
+const communitiesWithDetails = useMemo(() => {
+  return pdas.map(pda => {
+    // communityInfoMap에서 직접 데이터 가져오기
+    const communityData = communityInfoMap[pda] || {};
+    const depositors = depositorsMap[pda] || [];
+    
+    // 시간 및 만료 정보 계산
+    let lastActivityTime = null;
+    let lastActivityTimeFormatted = "Never";
+    let expirationTime = null;
+    let expirationTimeFormatted = "Unknown";
+    let timeRemaining = "";
+    let isExpired = false;
+    
+    const timeLimitSeconds = communityData.time_limit || 108000;
+    
+    if (communityData.last_activity_timestamp && !isNaN(Number(communityData.last_activity_timestamp))) {
+      const timestamp = Number(communityData.last_activity_timestamp);
+      lastActivityTime = new Date(timestamp * 1000);
+      
+      lastActivityTimeFormatted = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      }).format(lastActivityTime);
+      
+      expirationTime = new Date((timestamp + timeLimitSeconds) * 1000);
+      
+      expirationTimeFormatted = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      }).format(expirationTime);
+      
+      const now = new Date();
+      const diffInSeconds = Math.floor((expirationTime - now) / 1000);
+      
+      if (diffInSeconds <= 0) {
+        isExpired = true;
+        timeRemaining = "Expired";
+      } else {
+        // 남은 시간 계산
+        const days = Math.floor(diffInSeconds / 86400);
+        const hours = Math.floor((diffInSeconds % 86400) / 3600);
+        const minutes = Math.floor((diffInSeconds % 3600) / 60);
+        
+        if (days > 0) {
+          timeRemaining = `${days}d ${hours}h remaining`;
+        } else if (hours > 0) {
+          timeRemaining = `${hours}h ${minutes}m remaining`;
+        } else {
+          timeRemaining = `${minutes}m remaining`;
+        }
+      }
+    }
+    
+    // 예치금액 계산
+    const totalLamportsFromDepositors = depositors.reduce((sum, depositor) => {
+      return sum + (depositor.amount || 0);
+    }, 0);
+    
+    const totalLamports = totalLamportsFromDepositors > 0 ? 
+      totalLamportsFromDepositors : (communityData.total_deposit || 0);
+    const bountyAmount = totalLamports / LAMPORTS_PER_SOL;
+    
+    // 일관된 색상 생성
+    const gradient = getConsistentColor(pda);
+    
+    return {
+      id: pda,
+      pda: pda,
+      name: communityData.name || `Community ${pda.slice(0, 6)}...`,
+      description: communityData.description || `A community on the Solana blockchain`,
+      bountyAmount,
+      gradient,
+      timeLimit: `${Math.round((timeLimitSeconds || 0) / 60)} minutes`,
+      baseFee: (communityData.base_fee || 0) / LAMPORTS_PER_SOL,
+      lastActivityTime,
+      lastActivityTimeFormatted,
+      expirationTime,
+      expirationTimeFormatted,
+      timeRemaining,
+      isExpired,
+      popularity: communityData.depositor_count || 0,
+      admin: communityData.admin,
+      createdAt: lastActivityTime ? lastActivityTime.toISOString() : new Date().toISOString(),
+      sortIndex: Number(communityData.last_activity_timestamp || 0)
+    };
+  });
+}, [pdas, communityInfoMap, depositorsMap]);
+
+
+
+  
+  
+
+  // 랜덤 색상 생성 함수
+  // 랜덤 색상 대신 PDA 값을 기반으로 한 일관된 색상 생성
+  function getConsistentColor(pda) {
+    const colors = ['blue', 'green', 'red', 'yellow', 'purple', 'pink', 'indigo', 'teal', 'orange', 'cyan'];
+
+    // PDA 문자열을 숫자로 변환 (간단한 해시)
+    const hash = pda.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+    // 해시 값으로 색상 인덱스 계산
+    const primaryIdx = hash % colors.length;
+    const secondaryIdx = (hash * 13) % colors.length; // 다른 해시 알고리즘 사용
+
+    return `bg-gradient-to-r from-${colors[primaryIdx]}-400 to-${colors[secondaryIdx]}-500`;
+  }
+
+
+  // 필터링 및 정렬
+  const filteredAndSortedCommunities = useMemo(() => {
+    let result = communitiesWithDetails.filter(community => 
+      community.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      community.description?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+    
+    // 정렬 로직을 명확하게 하고, 타임스탬프가 없는 경우 처리
+    switch(sortOption) {
+      case "recent":
+        result = [...result].sort((a, b) => {
+          // 정렬용 인덱스 사용 (타임스탬프)
+          const timeA = a.sortIndex || 0;
+          const timeB = b.sortIndex || 0;
+          return timeB - timeA;
+        });
+        break;
+      case "bounty":
+        result = [...result].sort((a, b) => (b.bountyAmount || 0) - (a.bountyAmount || 0));
+        break;
+      case "popularity":
+        result = [...result].sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+        break;
+    }
+    
+    return result;
+  }, [communitiesWithDetails, searchQuery, sortOption]);
+  
+
+  // 나머지 코드는 이전과 동일...
+  
+  // 여기서부터는 이전 코드와 동일하게 유지
   const handleCreateCommunity = () => {
     setShowCreateModal(true);
   };
@@ -142,94 +278,78 @@ export default function AppPage() {
   const handleCloseModal = () => {
     setShowCreateModal(false);
   };
-  
-  const handleCreateCommunitySubmit = (communityData: {
-    name: string;
-    description: string;
-    bountyAmount: number;
-    timeLimit: number;
-    baseFee: number;
-    socialLinks?: {
-      github?: string;
-      twitter?: string;
-      telegram?: string;
-    };
-    profileImage?: string;
-  }) => {
-    // In a real implementation, we would call an API to create the community
-    console.log("Creating community with social profiles:", communityData);
-    
-    // Mock implementation - create a new community and add it to the list
-    const newCommunity = {
-      id: `${MOCK_COMMUNITIES.length + 1}`,
-      name: communityData.name,
-      description: communityData.description,
-      bountyAmount: communityData.bountyAmount,
-      gradient: "bg-gradient-to-r from-teal-400 to-blue-500", // Default gradient
-      timeLimit: `${communityData.timeLimit} minutes`,
-      baseFee: communityData.baseFee,
-      // Social links would be stored in the real implementation
-      socialLinks: communityData.socialLinks,
-      profileImage: communityData.profileImage || null
-    };
-    
-    // In a real implementation, we would update the state with the new community
-    // For now, just close the modal
-    setShowCreateModal(false);
-    
-    // For demo purposes, add to joined communities automatically
-    setJoinedCommunities([...joinedCommunities, newCommunity.id]);
-  };
 
-  const handleDepositToCommunity = (e: React.MouseEvent, communityId: string) => {
+  const handleCreateCommunitySubmit = async (communityData) => {
+    // 실제 구현에서는 API를 호출하여 커뮤니티 생성
+    console.log("Creating community:", communityData);
+    
+    // 커뮤니티 생성 후 데이터 다시 로드 (communities API 호출 제거)
+    try {
+      // PDA 목록만 다시 로드하고 각 PDA에 대한 정보를 개별적으로 가져옵니다
+      const pdasResponse = await fetchAllPDAs();
+      const pdasArray = pdasResponse.pdas || [];
+      setPdas(pdasArray);
+      
+      // 커뮤니티 정보와 예치자 정보를 다시 로드합니다
+      const communityDataMap = {};
+      const depositorsData = {};
+      
+      // 새로운 PDA 목록에 대해 정보 가져오기
+      for (const pda of pdasArray) {
+        try {
+          const communityInfo = await fetchCommunityInfo(pda);
+          communityDataMap[pda] = {
+            ...communityInfo,
+            pda: pda
+          };
+          
+          const depositorsResponse = await fetchCommunityDepositors(pda);
+          depositorsData[pda] = depositorsResponse.depositors || [];
+        } catch (err) {
+          console.error(`Error fetching data for PDA ${pda}:`, err);
+          communityDataMap[pda] = { pda };
+        }
+      }
+      
+      // 상태 업데이트
+      setCommunityInfoMap(communityDataMap);
+      setDepositorsMap(depositorsData);
+      
+      setShowCreateModal(false);
+    } catch (err) {
+      console.error("Error creating community:", err);
+      // 에러 처리 로직
+    }
+  };
+  
+  
+
+
+  const handleDepositToCommunity = (e, communityId) => {
     e.stopPropagation();
     e.preventDefault();
     
-    // In a real app, this would open a deposit modal or wallet transaction
+    // 실제 구현에서는 예치 모달 또는 트랜잭션 처리
     console.log(`Depositing to community: ${communityId}`);
     
-    // For demo purposes, also join the community
     if (!joinedCommunities.includes(communityId)) {
       setJoinedCommunities([...joinedCommunities, communityId]);
     }
   };
   
-  const handleSearchChange = (query: string) => {
+  const handleSearchChange = (query) => {
     setSearchQuery(query);
-    setCurrentPage(1); // Reset to first page on new search
+    setCurrentPage(1);
   };
   
-  const handleSortChange = (option: "recent" | "bounty" | "popularity") => {
+  const handleSortChange = (option) => {
     setSortOption(option);
-    setCurrentPage(1); // Reset to first page on new sort
+    setCurrentPage(1);
   };
   
-  // Filter and sort communities
-  const filteredAndSortedCommunities = useMemo(() => {
-    // First filter by search query
-    let result = MOCK_COMMUNITIES.filter(community => 
-      community.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      community.description.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-    
-    // Then sort according to the selected option
-    switch(sortOption) {
-      case "recent":
-        result = [...result].sort((a, b) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        break;
-      case "bounty":
-        result = [...result].sort((a, b) => b.bountyAmount - a.bountyAmount);
-        break;
-      case "popularity":
-        result = [...result].sort((a, b) => b.popularity - a.popularity);
-        break;
-    }
-    
-    return result;
-  }, [searchQuery, sortOption]);
 
+
+  // 지갑 연결 안 된 경우
   if (!connected) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-8">
@@ -252,8 +372,6 @@ export default function AppPage() {
             </div>
           </div>
           
-          {/* Pixel mode toggle removed since we're always using pixel mode */}
-          
           <div className="mt-6 text-center">
             <Link href="/" className="text-teal-600 dark:text-teal-400 hover:underline">
               Back to Home
@@ -264,6 +382,52 @@ export default function AppPage() {
         <div className="mt-8 max-w-md text-center text-gray-600 dark:text-gray-400">
           <p>Supported wallets: Phantom, Solflare</p>
         </div>
+      </div>
+    );
+  }
+
+  // 로딩 상태 표시
+  if (isLoading) {
+    return (
+      <div className="flex flex-col min-h-screen">
+        <AppHeader 
+          onCreateCommunity={handleCreateCommunity}
+          isPixelMode={isPixelMode}
+        />
+        <main className={`flex-grow flex items-center justify-center ${isPixelMode ? 'bg-blue-100' : 'bg-gray-50 dark:bg-gray-900'}`}>
+          <div className={`p-8 ${isPixelMode ? 'border-4 border-black bg-white font-silkscreen' : 'bg-white dark:bg-gray-800 rounded-xl shadow-md'}`}>
+            <p className="text-xl text-center">Loading communities...</p>
+            <div className="mt-4 flex justify-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500"></div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // 에러 상태 표시
+  if (error) {
+    return (
+      <div className="flex flex-col min-h-screen">
+        <AppHeader 
+          onCreateCommunity={handleCreateCommunity}
+          isPixelMode={isPixelMode}
+        />
+        <main className={`flex-grow flex items-center justify-center ${isPixelMode ? 'bg-blue-100' : 'bg-gray-50 dark:bg-gray-900'}`}>
+          <div className={`p-8 ${isPixelMode ? 'border-4 border-black bg-white font-silkscreen' : 'bg-white dark:bg-gray-800 rounded-xl shadow-md'}`}>
+            <p className="text-xl text-center text-red-500">Error loading communities</p>
+            <p className="mt-2 text-center">{error}</p>
+            <div className="mt-4 flex justify-center">
+              <button 
+                onClick={() => window.location.reload()}
+                className={`${isPixelMode ? 'border-4 border-black bg-teal-500 hover:bg-teal-600 text-white px-6 py-2' : 'bg-teal-600 text-white px-4 py-2 rounded-md hover:bg-teal-700'}`}
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -317,7 +481,7 @@ export default function AppPage() {
           {/* Communities Grid */}
           {filteredAndSortedCommunities.length > 0 && (
             <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 ${isPixelMode ? 'gap-y-8' : ''}`}>
-              {filteredAndSortedCommunities
+                {filteredAndSortedCommunities
                 .slice((currentPage - 1) * communitiesPerPage, currentPage * communitiesPerPage)
                 .map((community) => (
                 <Link href={`/app/community/${community.id}`} key={community.id}>
@@ -328,16 +492,22 @@ export default function AppPage() {
                       bountyAmount={community.bountyAmount}
                       gradient={community.gradient}
                       isPixelMode={isPixelMode}
+                      lastActivityTimeFormatted={community.lastActivityTimeFormatted}
+                      timeRemaining={community.timeRemaining}
+                      isExpired={community.isExpired}
+                      expirationTime={community.expirationTime} // 이 줄 추가
                       onDeposit={(e) => handleDepositToCommunity(e, community.id)}
                     />
                   </div>
                 </Link>
               ))}
+              
+
             </div>
           )}
           
           {/* Pagination */}
-          {filteredAndSortedCommunities.length > 0 && (
+          {filteredAndSortedCommunities.length > communitiesPerPage && (
             <div className="mt-8 flex justify-center">
               <div className="flex space-x-2">
                 {[...Array(Math.ceil(filteredAndSortedCommunities.length / communitiesPerPage))].map((_, index) => (
@@ -364,51 +534,8 @@ export default function AppPage() {
             </div>
           )}
           
-          <div className="mt-12">
-            <h2 className={`text-xl font-bold ${isPixelMode ? 'text-teal-800 font-silkscreen uppercase' : 'text-teal-900 dark:text-teal-200'} mb-4`}>Your DAO List</h2>
-            {joinedCommunities.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {MOCK_COMMUNITIES
-                  .filter(community => joinedCommunities.includes(community.id))
-                  .map(community => (
-                    <div 
-                      key={community.id}
-                      className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-6"
-                    >
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{community.name}</h3>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                        <div>
-                          <span className="text-gray-500 dark:text-gray-400">Time Limit:</span>
-                          <p className="font-medium text-gray-800 dark:text-gray-200">{community.timeLimit}</p>
-                        </div>
-                        <div>
-                          <span className="text-gray-500 dark:text-gray-400">Base Fee:</span>
-                          <p className="font-medium text-gray-800 dark:text-gray-200">{community.baseFee} SOL</p>
-                        </div>
-                        <div className="col-span-2">
-                          <span className="text-gray-500 dark:text-gray-400">Total Bounty:</span>
-                          <p className="font-medium text-green-600 dark:text-green-400">{community.bountyAmount} SOL</p>
-                        </div>
-                      </div>
-                      <div className="mt-4">
-                        <Link href={`/app/community/${community.id}`}>
-                          <Button variant="primary" size="sm" className="w-full">
-                            View Community
-                          </Button>
-                        </Link>
-                      </div>
-                    </div>
-                  ))
-                }
-              </div>
-            ) : (
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-6 text-center">
-                <p className="text-gray-600 dark:text-gray-400">
-                  You haven&apos;t joined any communities yet. Join existing ones or create your own!
-                </p>
-              </div>
-            )}
-          </div>
+          {/* Joined Communities */}
+          
         </div>
       </main>
       
