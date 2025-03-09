@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::error::Error;
-use std::fmt;
+
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UserProfile {

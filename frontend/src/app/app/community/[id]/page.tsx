@@ -79,6 +79,7 @@ const MOCK_POSTS = [
     likedBy: [],
   },
 ];
+//////////
 
 export default function CommunityDetailPage() {
   // const router = useRouter();
