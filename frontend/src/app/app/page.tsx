@@ -12,17 +12,14 @@ import { SearchBar } from "@/components/SearchBar";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 
 // API 호출 함수들
+// API 호출 함수들 - pdas 참조 제거
 const fetchAllPDAs = async () => {
   const response = await fetch('http://localhost:8080/api/dao/pdas');
   if (!response.ok) throw new Error('Failed to fetch PDAs');
   return response.json();
 };
 
-const fetchAllCommunities = async () => {
-  const response = await fetch('http://localhost:8080/api/dao/communities');
-  if (!response.ok) throw new Error('Failed to fetch communities');
-  return response.json();
-};
+
 
 const fetchCommunityDepositors = async (pda) => {
   const response = await fetch(`http://localhost:8080/api/dao/depositors?pda=${pda}`);
@@ -43,209 +40,204 @@ export default function AppPage() {
   const [isPixelMode] = useState(true); // Always use pixel mode
   const [currentPage, setCurrentPage] = useState(1);
   const communitiesPerPage = 6;
+  const [communities, setCommunities] = useState([]); // 이 줄 추가 또는 유지
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOption, setSortOption] = useState("recent");
   
   // 데이터 상태 관리
   const [pdas, setPdas] = useState([]);
-  const [communities, setCommunities] = useState([]);
   const [communityInfoMap, setCommunityInfoMap] = useState({});
   const [depositorsMap, setDepositorsMap] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
   // 데이터 로딩
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setIsLoading(true);
-        
-        // 1. PDA 목록 가져오기
-        const pdasResponse = await fetchAllPDAs();
-        console.log('PDA Response:', pdasResponse);
-        
-        // API 응답 구조에 맞게 처리 (pdas 배열 추출)
-        const pdasArray = pdasResponse.pdas || [];
-        setPdas(pdasArray);
-        
-        // 2. 모든 커뮤니티 정보 가져오기
-        const communitiesResponse = await fetchAllCommunities();
-        console.log('Communities Response:', communitiesResponse);
-        
-        // API 응답 구조에 맞게 처리 (communities 배열 추출)
-        const communitiesArray = communitiesResponse.communities || [];
-        setCommunities(communitiesArray);
-        
-        // 3. 각 PDA에 대한 추가 정보 가져오기
-        const infoMap = {};
-        const depositorsData = {};
-        
-        for (const pda of pdasArray) {
-          try {
-            // 커뮤니티 상세 정보 가져오기
-            const communityInfo = await fetchCommunityInfo(pda);
-            infoMap[pda] = communityInfo;
-            
-            // 예치자 정보 가져오기
-            const depositorsResponse = await fetchCommunityDepositors(pda);
-            const depositors = depositorsResponse.depositors || [];
-            depositorsData[pda] = depositors;
-          } catch (err) {
-            console.error(`Error fetching data for PDA ${pda}:`, err);
-          }
-        }
-        
-        setCommunityInfoMap(infoMap);
-        setDepositorsMap(depositorsData);
-        setIsLoading(false);
-      } catch (err) {
-        console.error("Error loading data:", err);
-        setError(err.message);
-        setIsLoading(false);
-      }
-    };
-    
-    if (connected) {
-      loadData();
-    }
-  }, [connected]);
 
-  const communitiesWithDetails = useMemo(() => {
-    return pdas.map((pda, index) => {
-      const community = communities[index] || {};
-      const communityInfo = communityInfoMap[pda] || {};
-      const depositors = depositorsMap[pda] || [];
+  // 데이터 로딩
+// 데이터 로딩 방식 변경
+useEffect(() => {
+  const loadData = async () => {
+    try {
+      setIsLoading(true);
       
-      // Lamports를 SOL로 변환
-      const totalLamportsFromAPI = community.total_deposit || 0;
+      // 1. PDA 목록 가져오기
+      const pdasResponse = await fetchAllPDAs();
+      console.log('PDA Response:', pdasResponse);
       
-      // 예치자 정보에서 직접 합산
-      const totalLamportsFromDepositors = depositors.reduce((sum, depositor) => {
-        return sum + (depositor.amount || 0);
-      }, 0);
-  
-      const totalLamports = totalLamportsFromDepositors > 0 ? 
-        totalLamportsFromDepositors : totalLamportsFromAPI;
-      const bountyAmount = totalLamports / LAMPORTS_PER_SOL;
+      const pdasArray = pdasResponse.pdas || [];
+      setPdas(pdasArray);
       
-      // 시간 제한 초 단위로 저장 (원본 값)
-      const timeLimitSeconds = community.time_limit || 108000; // 기본값 30시간(108000초)
+      // 2. 각 PDA에 대해 개별 커뮤니티 정보 가져오기
+      const communityDataMap = {};
+      const infoMap = {};
+      const depositorsData = {};
       
-      // 시간 제한을 분 단위로 변환 (초 -> 분) - 표시용
-      const timeLimitMinutes = Math.round(timeLimitSeconds / 60);
-      
-      // 기본 수수료를 SOL로 변환
-      const baseFee = (community.base_fee || 0) / LAMPORTS_PER_SOL;
-  
-      let lastActivityTime = null;
-      let lastActivityTimeFormatted = "Never";
-      let expirationTime = null;
-      let expirationTimeFormatted = "Unknown";
-      let timeRemaining = "";
-      let isExpired = false;
-      
-      if (community.last_activity_timestamp && !isNaN(Number(community.last_activity_timestamp))) {
-        const timestamp = Number(community.last_activity_timestamp);
-        lastActivityTime = new Date(timestamp * 1000); // 초 단위를 밀리초로 변환
-        
-        // 날짜 포맷팅 (예: "Mar 9, 2025, 4:01 PM")
-        lastActivityTimeFormatted = new Intl.DateTimeFormat('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        }).format(lastActivityTime);
-        
-        // 종료 시간 계산 (마지막 활동 시간 + time_limit)
-        expirationTime = new Date((timestamp + timeLimitSeconds) * 1000);
-        
-        expirationTimeFormatted = new Intl.DateTimeFormat('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        }).format(expirationTime);
-        
-        // 현재 시간과 종료 시간 비교하여 남은 시간 계산
-        const now = new Date();
-        const diffInSeconds = Math.floor((expirationTime - now) / 1000);
-        
-        if (diffInSeconds <= 0) {
-          isExpired = true;
-          timeRemaining = "Expired";
-        } else {
-          // 남은 시간 계산 (일, 시간, 분)
-          const days = Math.floor(diffInSeconds / 86400);
-          const hours = Math.floor((diffInSeconds % 86400) / 3600);
-          const minutes = Math.floor((diffInSeconds % 3600) / 60);
+      // 병렬로 모든 요청 처리하기 위한 Promise 배열
+      const promises = pdasArray.map(async (pda) => {
+        try {
+          // 커뮤니티 기본 정보 가져오기 (communities API 대신 개별 호출)
+          const communityInfo = await fetchCommunityInfo(pda);
           
-          if (days > 0) {
-            timeRemaining = `${days}d ${hours}h remaining`;
-          } else if (hours > 0) {
-            timeRemaining = `${hours}h ${minutes}m remaining`;
-          } else {
-            timeRemaining = `${minutes}m remaining`;
-          }
+          // 기본 정보 및 상세 정보를 같은 객체에 저장
+          communityDataMap[pda] = {
+            ...communityInfo,
+            pda: pda // pda 정보 명시적으로 포함
+          };
+          
+          // 예치자 정보 별도로 가져오기
+          const depositorsResponse = await fetchCommunityDepositors(pda);
+          const depositors = depositorsResponse.depositors || [];
+          depositorsData[pda] = depositors;
+        } catch (err) {
+          console.error(`Error fetching data for PDA ${pda}:`, err);
+          // 오류가 발생해도 기본 객체 생성
+          communityDataMap[pda] = { pda };
+        }
+      });
+      
+      // 모든 API 호출이 완료될 때까지 기다림
+      await Promise.all(promises);
+      
+      // 상태 업데이트
+      setCommunityInfoMap(communityDataMap);
+      setDepositorsMap(depositorsData);
+      
+      // 더 이상 사용하지 않음
+      // setCommunities([...]);
+      
+      setIsLoading(false);
+    } catch (err) {
+      console.error("Error loading data:", err);
+      setError(err.message);
+      setIsLoading(false);
+    }
+  };
+  
+  if (connected) {
+    loadData();
+  }
+}, [connected]);
+
+
+
+
+const communitiesWithDetails = useMemo(() => {
+  return pdas.map(pda => {
+    // communityInfoMap에서 직접 데이터 가져오기
+    const communityData = communityInfoMap[pda] || {};
+    const depositors = depositorsMap[pda] || [];
+    
+    // 시간 및 만료 정보 계산
+    let lastActivityTime = null;
+    let lastActivityTimeFormatted = "Never";
+    let expirationTime = null;
+    let expirationTimeFormatted = "Unknown";
+    let timeRemaining = "";
+    let isExpired = false;
+    
+    const timeLimitSeconds = communityData.time_limit || 108000;
+    
+    if (communityData.last_activity_timestamp && !isNaN(Number(communityData.last_activity_timestamp))) {
+      const timestamp = Number(communityData.last_activity_timestamp);
+      lastActivityTime = new Date(timestamp * 1000);
+      
+      lastActivityTimeFormatted = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      }).format(lastActivityTime);
+      
+      expirationTime = new Date((timestamp + timeLimitSeconds) * 1000);
+      
+      expirationTimeFormatted = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      }).format(expirationTime);
+      
+      const now = new Date();
+      const diffInSeconds = Math.floor((expirationTime - now) / 1000);
+      
+      if (diffInSeconds <= 0) {
+        isExpired = true;
+        timeRemaining = "Expired";
+      } else {
+        // 남은 시간 계산
+        const days = Math.floor(diffInSeconds / 86400);
+        const hours = Math.floor((diffInSeconds % 86400) / 3600);
+        const minutes = Math.floor((diffInSeconds % 3600) / 60);
+        
+        if (days > 0) {
+          timeRemaining = `${days}d ${hours}h remaining`;
+        } else if (hours > 0) {
+          timeRemaining = `${hours}h ${minutes}m remaining`;
+        } else {
+          timeRemaining = `${minutes}m remaining`;
         }
       }
-      
-      // 타임스탬프 안전하게 처리
-      let createdAt;
-      try {
-        // 타임스탬프가 존재하고 유효한 숫자인지 확인
-        const timestamp = community.last_activity_timestamp;
-        if (timestamp && !isNaN(Number(timestamp))) {
-          // 솔라나 타임스탬프는 초 단위이므로 밀리초로 변환
-          const date = new Date(Number(timestamp) * 1000);
-          
-          // 유효한 날짜인지 확인 (Invalid Date 체크)
-          if (!isNaN(date.getTime())) {
-            createdAt = date.toISOString();
-          } else {
-            // 유효하지 않은 날짜면 현재 시간 사용
-            createdAt = new Date().toISOString();
-          }
-        } else {
-          // 타임스탬프가 없으면 현재 시간 사용
-          createdAt = new Date().toISOString();
-        }
-      } catch (err) {
-        console.error('Invalid timestamp:', community.last_activity_timestamp, err);
-        createdAt = new Date().toISOString();
-      }
+    }
+    
+    // 예치금액 계산
+    const totalLamportsFromDepositors = depositors.reduce((sum, depositor) => {
+      return sum + (depositor.amount || 0);
+    }, 0);
+    
+    const totalLamports = totalLamportsFromDepositors > 0 ? 
+      totalLamportsFromDepositors : (communityData.total_deposit || 0);
+    const bountyAmount = totalLamports / LAMPORTS_PER_SOL;
+    
+    // 일관된 색상 생성
+    const gradient = getConsistentColor(pda);
+    
+    return {
+      id: pda,
+      pda: pda,
+      name: communityData.name || `Community ${pda.slice(0, 6)}...`,
+      description: communityData.description || `A community on the Solana blockchain`,
+      bountyAmount,
+      gradient,
+      timeLimit: `${Math.round((timeLimitSeconds || 0) / 60)} minutes`,
+      baseFee: (communityData.base_fee || 0) / LAMPORTS_PER_SOL,
+      lastActivityTime,
+      lastActivityTimeFormatted,
+      expirationTime,
+      expirationTimeFormatted,
+      timeRemaining,
+      isExpired,
+      popularity: communityData.depositor_count || 0,
+      admin: communityData.admin,
+      createdAt: lastActivityTime ? lastActivityTime.toISOString() : new Date().toISOString(),
+      sortIndex: Number(communityData.last_activity_timestamp || 0)
+    };
+  });
+}, [pdas, communityInfoMap, depositorsMap]);
+
+
+
   
-      return {
-        id: pda,
-        pda: pda,
-        name: communityInfo.name || `Community ${pda}`,
-        description: communityInfo.description || `A community on the Solana blockchain`,
-        bountyAmount,
-        gradient: `bg-gradient-to-r from-${getRandomColor()}-400 to-${getRandomColor()}-500`,
-        timeLimit: `${timeLimitMinutes} minutes`,
-        baseFee,
-        createdAt,
-        lastActivityTime,
-        lastActivityTimeFormatted,
-        expirationTime,
-        expirationTimeFormatted,
-        timeRemaining,
-        isExpired,
-        popularity: community.depositor_count || 0,
-        admin: community.admin
-      };
-    });
-  }, [pdas, communities, communityInfoMap, depositorsMap]);
   
 
   // 랜덤 색상 생성 함수
-  function getRandomColor() {
+  // 랜덤 색상 대신 PDA 값을 기반으로 한 일관된 색상 생성
+  function getConsistentColor(pda) {
     const colors = ['blue', 'green', 'red', 'yellow', 'purple', 'pink', 'indigo', 'teal', 'orange', 'cyan'];
-    return colors[Math.floor(Math.random() * colors.length)];
+
+    // PDA 문자열을 숫자로 변환 (간단한 해시)
+    const hash = pda.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+    // 해시 값으로 색상 인덱스 계산
+    const primaryIdx = hash % colors.length;
+    const secondaryIdx = (hash * 13) % colors.length; // 다른 해시 알고리즘 사용
+
+    return `bg-gradient-to-r from-${colors[primaryIdx]}-400 to-${colors[secondaryIdx]}-500`;
   }
+
 
   // 필터링 및 정렬
   const filteredAndSortedCommunities = useMemo(() => {
@@ -254,11 +246,15 @@ export default function AppPage() {
       community.description?.toLowerCase().includes(searchQuery.toLowerCase())
     );
     
+    // 정렬 로직을 명확하게 하고, 타임스탬프가 없는 경우 처리
     switch(sortOption) {
       case "recent":
-        result = [...result].sort((a, b) => 
-          new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-        );
+        result = [...result].sort((a, b) => {
+          // 정렬용 인덱스 사용 (타임스탬프)
+          const timeA = a.sortIndex || 0;
+          const timeB = b.sortIndex || 0;
+          return timeB - timeA;
+        });
         break;
       case "bounty":
         result = [...result].sort((a, b) => (b.bountyAmount || 0) - (a.bountyAmount || 0));
@@ -270,6 +266,7 @@ export default function AppPage() {
     
     return result;
   }, [communitiesWithDetails, searchQuery, sortOption]);
+  
 
   // 나머지 코드는 이전과 동일...
   
@@ -286,25 +283,47 @@ export default function AppPage() {
     // 실제 구현에서는 API를 호출하여 커뮤니티 생성
     console.log("Creating community:", communityData);
     
-    // 커뮤니티 생성 후 데이터 다시 로드
+    // 커뮤니티 생성 후 데이터 다시 로드 (communities API 호출 제거)
     try {
+      // PDA 목록만 다시 로드하고 각 PDA에 대한 정보를 개별적으로 가져옵니다
       const pdasResponse = await fetchAllPDAs();
-      // 여기를 수정: 객체에서 pdas 배열을 추출
-      setPdas(pdasResponse.pdas || []);
+      const pdasArray = pdasResponse.pdas || [];
+      setPdas(pdasArray);
       
-      const communitiesResponse = await fetchAllCommunities();
-      // 여기도 수정: 객체에서 communities 배열을 추출
-      setCommunities(communitiesResponse.communities || []);
+      // 커뮤니티 정보와 예치자 정보를 다시 로드합니다
+      const communityDataMap = {};
+      const depositorsData = {};
+      
+      // 새로운 PDA 목록에 대해 정보 가져오기
+      for (const pda of pdasArray) {
+        try {
+          const communityInfo = await fetchCommunityInfo(pda);
+          communityDataMap[pda] = {
+            ...communityInfo,
+            pda: pda
+          };
+          
+          const depositorsResponse = await fetchCommunityDepositors(pda);
+          depositorsData[pda] = depositorsResponse.depositors || [];
+        } catch (err) {
+          console.error(`Error fetching data for PDA ${pda}:`, err);
+          communityDataMap[pda] = { pda };
+        }
+      }
+      
+      // 상태 업데이트
+      setCommunityInfoMap(communityDataMap);
+      setDepositorsMap(depositorsData);
       
       setShowCreateModal(false);
     } catch (err) {
       console.error("Error creating community:", err);
-      // 에러 처리 로직 추가
+      // 에러 처리 로직
     }
   };
+  
+  
 
-  
-  
 
   const handleDepositToCommunity = (e, communityId) => {
     e.stopPropagation();

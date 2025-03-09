@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -17,57 +17,48 @@ import {
 } from "@solana/web3.js";
 import axios from "axios";
 
+// API 기본 URL 상수 정의 - 환경에 따라 변경 가능
+const API_BASE_URL = "http://localhost:8080";
 
-// API 호출 함수들
+function getConsistentColor(id) {
+  const colors = ['blue', 'green', 'red', 'yellow', 'purple', 'pink', 'indigo', 'teal', 'orange', 'cyan'];
+  // ID를 숫자로 변환하여 일관된 인덱스 생성
+  const hash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const primaryIdx = hash % colors.length;
+  const secondaryIdx = (hash * 13) % colors.length; // 다른 해시 알고리즘 사용
+  return `bg-gradient-to-r from-${colors[primaryIdx]}-400 to-${colors[secondaryIdx]}-500`;
+}
+
+// 개별 API 호출 함수 정의 - 재사용성을 위해
 const fetchCommunityDetails = async (pda) => {
   try {
-    const response = await fetch(`http://localhost:8080/api/dao/community?pda=${pda}`);
-    if (!response.ok) throw new Error(`Failed to fetch community info for PDA: ${pda}`);
-    return response.json();
+    const response = await fetch(`${API_BASE_URL}/api/dao/community?pda=${pda}`);
+    if (!response.ok) throw new Error('Failed to fetch community details');
+    return await response.json();
   } catch (error) {
     console.error("Error fetching community details:", error);
-    return null;
+    return {};
   }
 };
 
 const fetchCommunityData = async (pda) => {
   try {
-    // PDA 목록 가져오기
-    const pdasResponse = await fetch('http://localhost:8080/api/dao/pdas');
-    if (!pdasResponse.ok) throw new Error('Failed to fetch PDAs');
-    const pdasData = await pdasResponse.json();
-    const pdas = pdasData.pdas || [];
-    
-    // PDA가 목록에 있는지 확인
-    if (!pdas.includes(pda)) {
-      console.error(`PDA ${pda} not found in the list`);
-      return null;
-    }
-    
-    // 커뮤니티 기본 정보 가져오기
-    const communitiesResponse = await fetch('http://localhost:8080/api/dao/communities');
-    if (!communitiesResponse.ok) throw new Error('Failed to fetch communities');
-    const communitiesData = await communitiesResponse.json();
-    
-    // PDA 인덱스 찾기
-    const pdaIndex = pdas.indexOf(pda);
-    if (pdaIndex === -1 || !communitiesData.communities || pdaIndex >= communitiesData.communities.length) {
-      console.error(`Community data not found for PDA ${pda}`);
-      return null;
-    }
-    
-    // 해당 인덱스의 커뮤니티 정보 반환
-    return communitiesData.communities[pdaIndex] || null;
+    // 특정 커뮤니티 정보만 직접 요청
+    const response = await fetch(`${API_BASE_URL}/api/dao/community?pda=${pda}`);
+    if (!response.ok) throw new Error('Failed to fetch community data');
+    const data = await response.json();
+    return data; // 직접 API 응답을 반환
   } catch (error) {
     console.error("Error fetching community data:", error);
     return null;
   }
 };
 
+
 const fetchCommunityDepositors = async (pda) => {
   try {
-    const response = await fetch(`http://localhost:8080/api/dao/depositors?pda=${pda}`);
-    if (!response.ok) throw new Error(`Failed to fetch depositors for PDA: ${pda}`);
+    const response = await fetch(`${API_BASE_URL}/api/dao/depositors?pda=${pda}`);
+    if (!response.ok) throw new Error('Failed to fetch depositors');
     const data = await response.json();
     return data.depositors || [];
   } catch (error) {
@@ -78,60 +69,143 @@ const fetchCommunityDepositors = async (pda) => {
 
 const fetchCommunityPosts = async (pda) => {
   try {
-    // 실제 API 호출로 변경
-    const response = await fetch(`http://localhost:8080/api/dao/posts?pda=${pda}`);
-    if (!response.ok) {
-      console.warn(`No posts found for community: ${pda}`);
-      return []; // 게시물이 없으면 빈 배열 반환
-    }
+    // 백엔드 API는 /api/dao/contents를 사용하지만, 클라이언트에서는 posts라는 이름으로 호출
+    const response = await fetch(`${API_BASE_URL}/api/dao/contents?pda=${pda}`);
+    if (!response.ok) throw new Error('Failed to fetch posts');
     const data = await response.json();
-    return data.posts || [];
+    return data.contents || []; // 백엔드 응답 형식에 맞게 조정
   } catch (error) {
     console.error("Error fetching posts:", error);
-    return []; // 오류 발생 시 빈 배열 반환
+    return [];
   }
 };
 
-// 게시물 생성 함수
-const createPost = async (pda, content, walletAddress) => {
+const fetchCommunityProposals = async (pda) => {
   try {
-    const response = await fetch(`http://localhost:8080/api/dao/post`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        pda,
-        content,
-        author: walletAddress
-      }),
-    });
-    
-    if (!response.ok) throw new Error('Failed to create post');
-    return await response.json();
-  } catch (error) {
-    console.error("Error creating post:", error);
-    throw error;
-  }
-};
-
-// 기존 API 함수들 아래에 추가
-
-// 프로포절 데이터 가져오기
-const fetchCommunityProposals = async (pda: string) => {
-  try {
-    const response = await fetch(`http://localhost:8080/api/dao/proposals?pda=${pda}`);
-    if (!response.ok) {
-      console.warn(`No proposals found for community: ${pda}`);
-      return []; // 제안이 없으면 빈 배열 반환
-    }
+    const response = await fetch(`${API_BASE_URL}/api/dao/proposals?pda=${pda}`);
+    if (!response.ok) throw new Error('Failed to fetch proposals');
     const data = await response.json();
     return data.proposals || [];
   } catch (error) {
     console.error("Error fetching proposals:", error);
-    return []; // 오류 발생 시 빈 배열 반환
+    return [];
   }
 };
+
+// 게시물 생성 함수
+const createPost = async (pda, content, author) => {
+  try {
+    // 백엔드 Content 구조체와 일치하도록 형식 조정
+    const postData = {
+      author: author,                         // 작성자 공개키
+      content_hash: content,                  // 간단한 해시 대용으로 내용 그대로 사용
+      content_uri: "",                        // IPFS 링크가 없으므로 빈 문자열
+      timestamp: Math.floor(Date.now() / 1000), // 유닉스 타임스탬프(초 단위)
+      votes: 0                                // 초기 투표 수
+    };
+    
+    console.log("전송 데이터:", postData);  // 디버그용
+    
+    const response = await axios.post(`${API_BASE_URL}/api/dao/content?pda=${pda}`, postData);
+    return response.data;
+  } catch (error) {
+    console.error("Error creating post:", error);
+    if (error.response) {
+      // 서버 응답 상세 정보 확인
+      console.error("서버 응답 상세:", error.response.data);
+    }
+    throw error;
+  }
+};
+
+
+// 좋아요 업데이트 함수
+const updatePostLike = async (pda, postId, walletAddress) => {
+  try {
+    const likeData = {
+      post_id: postId,
+      wallet: walletAddress
+    };
+    
+    const response = await axios.post(`${API_BASE_URL}/api/dao/like?pda=${pda}`, likeData);
+    return response.data;
+  } catch (error) {
+    console.error("Error updating post like:", error);
+    throw error;
+  }
+};
+
+const fetchCommunityAllData = async (pda) => {
+  try {
+    console.log(`Fetching data for PDA: ${pda}`); // 디버깅용 로그
+
+    // 직접 특정 커뮤니티 정보만 요청
+    const communityResponse = await fetch(`${API_BASE_URL}/api/dao/community?pda=${pda}`);
+    
+    if (!communityResponse.ok) {
+      console.error(`Failed to fetch community with status: ${communityResponse.status}`);
+      throw new Error(`Failed to fetch community with PDA: ${pda}`);
+    }
+    
+    const communityData = await communityResponse.json();
+    console.log("Fetched community data:", communityData); // 디버깅용 로그
+
+    // 병렬로 나머지 필요한 데이터 요청
+    const [depositorsResponse, contentsResponse, proposalsResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/dao/depositors?pda=${pda}`),
+      fetch(`${API_BASE_URL}/api/dao/contents?pda=${pda}`),
+      fetch(`${API_BASE_URL}/api/dao/proposals?pda=${pda}`)
+    ]);
+    
+    // 응답 데이터 처리
+    let depositors = [];
+    if (depositorsResponse.ok) {
+      const data = await depositorsResponse.json();
+      depositors = data.depositors || [];
+    } else {
+      console.error(`Failed to fetch depositors with status: ${depositorsResponse.status}`);
+    }
+    
+    let posts = [];
+    if (contentsResponse.ok) {
+      const data = await contentsResponse.json();
+      // 각 포스트에 고유 ID 추가
+      posts = (data.contents || []).map((post, index) => ({
+        ...post,
+        id: `${post.author}-${post.timestamp}-${index}`
+      }));
+    } else {
+      console.error(`Failed to fetch contents with status: ${contentsResponse.status}`);
+    }
+    
+    let proposals = [];
+    if (proposalsResponse.ok) {
+      const data = await proposalsResponse.json();
+      proposals = data.proposals || [];
+    } else {
+      console.error(`Failed to fetch proposals with status: ${proposalsResponse.status}`);
+    }
+    
+    // 커뮤니티 상세 정보 직접 생성 (또는 별도의 API에서 가져옴)
+    const details = {
+      name: communityData.name || `Community ${pda.slice(0, 6)}...`,
+      description: communityData.description || "A community on the Solana blockchain"
+    };
+    
+    return {
+      details,
+      communityData, // 직접 가져온 커뮤니티 데이터
+      depositors,
+      posts,
+      proposals
+    };
+  } catch (error) {
+    console.error("Error fetching community data:", error);
+    throw error;
+  }
+};
+
+
 
 // 구조체 정의 (파일 상단에 추가)
 interface DepositorData {
@@ -337,15 +411,12 @@ function createCastVoteInstruction(
   });
 }
 
-
-
-
 export default function CommunityDetailPage() {
   const params = useParams();
-  const { publicKey, connected } = useWallet();
+  const { publicKey, connected, wallet } = useWallet();
   const communityId = params.id as string;
   
-  const [isPixelMode] = useState(true); // Always use pixel mode
+  const [isPixelMode] = useState(true); // 픽셀 모드 고정
   const [newPost, setNewPost] = useState("");
   const [posts, setPosts] = useState([]);
   const [gridView, setGridView] = useState(true);
@@ -355,28 +426,30 @@ export default function CommunityDetailPage() {
   const [communityDetails, setCommunityDetails] = useState(null);
   const [communityData, setCommunityData] = useState(null);
   const [depositors, setDepositors] = useState([]);
+  const [proposals, setProposals] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isSubmittingPost, setIsSubmittingPost] = useState(false);
   
-  // 종료 시간 관련 상태
+  // 종료 시간 관련 상태 - 별도 계산 없이 직접 저장
   const [expirationTime, setExpirationTime] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState("");
   const [isExpired, setIsExpired] = useState(false);
+  const [communityGradient, setCommunityGradient] = useState('');
 
-    // CommunityDetailPage 함수 내부의 상태 변수 추가 (다른 상태 변수들과 함께)
-  const [activeTab, setActiveTab] = useState<'posts' | 'proposals'>('posts');
-  const [isDepositModalOpen, setIsDepositModalOpen] = useState<boolean>(false);
-  const [depositAmount, setDepositAmount] = useState<number>(0.1);
-  const [isVotingModalOpen, setIsVotingModalOpen] = useState<boolean>(false);
-  const [isSubmittingDeposit, setIsSubmittingDeposit] = useState<boolean>(false);
-  const [isSubmittingVote, setIsSubmittingVote] = useState<boolean>(false);
-  const [proposals, setProposals] = useState<any[]>([]);
-  const [selectedProposal, setSelectedProposal] = useState<any>(null);
+  // Tab 관련 상태
+  const [activeTab, setActiveTab] = useState('posts');
+  const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
+  const [depositAmount, setDepositAmount] = useState(0.1);
+  const [isVotingModalOpen, setIsVotingModalOpen] = useState(false);
+  const [isSubmittingDeposit, setIsSubmittingDeposit] = useState(false);
+  const [isSubmittingVote, setIsSubmittingVote] = useState(false);
+  const [selectedProposal, setSelectedProposal] = useState(null);
 
-  // 기능 구현 핸들러 함수 (CommunityDetailPage 컴포넌트 내부)
+  // 참조 변수로 데이터 로드 상태 추적 - 여러 번 로드 방지
+  const dataLoadedRef = useRef(false);
 
-// 예치금 전송 함수
+  // 예치금 전송 함수
   const depositToNewCommunity = async (pdaString: string, amount: number) => {
     if (!publicKey) {
       throw new Error("지갑이 연결되어 있지 않습니다.");
@@ -430,17 +503,12 @@ export default function CommunityDetailPage() {
         voting_power: amount
       };
 
-      await axios.post(`http://localhost:8080/api/dao/depositor?pda=${pdaString}`, depositorData);
+      await axios.post(`${API_BASE_URL}/api/dao/depositor?pda=${pdaString}`, depositorData);
 
-      // 10. 데이터 새로고침
-      const updatedDepositors = await fetchCommunityDepositors(pdaString);
-      setDepositors(updatedDepositors);
-
-      // 커뮤니티 데이터 새로고침
-      const updatedData = await fetchCommunityData(pdaString);
-      if (updatedData) {
-        setCommunityData(updatedData);
-      }
+      // 10. 데이터 새로고침 - 전체 데이터를 다시 로드하여 일관성 유지
+      const allData = await fetchCommunityAllData(pdaString);
+      setDepositors(allData.depositors);
+      setCommunityData(allData.communityData);
 
       return signature;
     } catch (err) {
@@ -466,71 +534,108 @@ export default function CommunityDetailPage() {
   };
 
   // 콘텐츠 제출 함수 - 기존 submitPost 함수를 대체
+
   const submitPost = async () => {
     if (newPost.trim().length === 0 || !publicKey || isExpired || isSubmittingPost) return;
-
+  
     try {
       setIsSubmittingPost(true);
-
-      // 1. PublicKey 객체 생성
+  
+      // 1. 지갑 연결 및 기능 확인
+      if (!wallet) {
+        throw new Error("지갑이 연결되지 않았습니다. 먼저 지갑을 연결해주세요.");
+      }
+  
+      if (!publicKey) {
+        throw new Error("공개키를 가져올 수 없습니다. 지갑 연결을 확인해주세요.");
+      }
+  
+      // 명시적 지갑 서명 기능 확인
+      if (!wallet.adapter || typeof wallet.adapter.signTransaction !== 'function') {
+        console.error("지갑 어댑터:", wallet.adapter);
+        throw new Error("현재 지갑은 트랜잭션 서명 기능을 지원하지 않습니다. 다른 지갑을 사용해보세요.");
+      }
+  
+      // 2. PublicKey 객체 생성
       const daoPda = new PublicKey(communityId);
-
-      // 2. 솔라나 연결 설정
+  
+      // 3. 솔라나 연결 설정
       const connection = new Connection("https://api.devnet.solana.com", "confirmed");
-
-      // 3. 콘텐츠 제출 명령어 생성
+  
+      // 4. 콘텐츠 제출 명령어 생성
       const contentInstruction = createSubmitContentInstruction(
         publicKey,
         daoPda,
         newPost
       );
-
-      // 4. 트랜잭션 생성
+  
+      // 5. 트랜잭션 생성
       const transaction = new Transaction();
-
-      // 5. 최근 블록해시 가져오기
+      
+      // 6. 최근 블록해시 가져오기
       const { blockhash } = await connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = publicKey;
-
-      // 6. 인스트럭션 추가
+  
+      // 7. 인스트럭션 추가
       transaction.add(contentInstruction);
-
-      // 7. 지갑으로 트랜잭션 서명
-      if (!wallet.signTransaction) {
-        throw new Error("지갑이 서명 기능을 지원하지 않습니다.");
+  
+      // 8. 지갑으로 트랜잭션 서명 시도
+      console.log("트랜잭션 서명 시도 중...");
+      let signedTransaction;
+      
+      try {
+        // 어댑터를 통한 직접 서명 시도
+        signedTransaction = await wallet.signTransaction(transaction);
+      } catch (signError) {
+        console.error("지갑 서명 중 오류:", signError);
+        
+        // 백업 방법: 어댑터를 통한 서명 시도
+        if (wallet.adapter && typeof wallet.adapter.signTransaction === 'function') {
+          try {
+            signedTransaction = await wallet.adapter.signTransaction(transaction);
+          } catch (adapterError) {
+            console.error("어댑터 서명 중 오류:", adapterError);
+            throw new Error("트랜잭션 서명에 실패했습니다. 지갑이 잠겨있거나 권한이 없습니다.");
+          }
+        } else {
+          throw new Error("지갑 서명 기능을 사용할 수 없습니다. 지갑 재연결 후 다시 시도해주세요.");
+        }
       }
-
-      const signedTransaction = await wallet.signTransaction(transaction);
-
-      // 8. 트랜잭션 전송 및 확인
+  
+      if (!signedTransaction) {
+        throw new Error("서명된 트랜잭션을 생성하지 못했습니다.");
+      }
+  
+      // 9. 트랜잭션 전송 및 확인
+      console.log("서명된 트랜잭션 전송 중...");
       const signature = await connection.sendRawTransaction(signedTransaction.serialize());
       await connection.confirmTransaction(signature);
-
+  
       console.log(`콘텐츠 제출 완료, 트랜잭션 ID:`, signature);
-
-      // 9. 백엔드에 콘텐츠 정보 저장
+  
+      // 10. 백엔드에 콘텐츠 정보 저장
       await createPost(communityId, newPost, publicKey.toString());
-
-      // 10. UI 업데이트
+  
+      // 11. UI 업데이트
       setNewPost("");
-
-      // 11. 게시물 목록 새로고침
-      const updatedPosts = await fetchCommunityPosts(communityId);
-      setPosts(updatedPosts);
-
-      // 12. 커뮤니티 데이터 새로고침
-      const updatedData = await fetchCommunityData(communityId);
-      if (updatedData) {
-        setCommunityData(updatedData);
-      }
+  
+      // 12. 전체 데이터를 다시 로드하여 일관성 유지
+      const allData = await fetchCommunityAllData(communityId);
+      setPosts(allData.posts);
+      setCommunityData(allData.communityData);
+      
+      alert("게시물이 성공적으로 제출되었습니다!");
+      
     } catch (error) {
       console.error("콘텐츠 제출 중 오류 발생:", error);
-      alert("콘텐츠 제출에 실패했습니다. 다시 시도해주세요.");
+      alert(`게시물 제출 실패: ${error.message || "알 수 없는 오류가 발생했습니다"}`);
     } finally {
       setIsSubmittingPost(false);
     }
   };
+
+  
 
   // 투표 제안 생성 함수
   const createVoteProposal = async (votingData: VotingData) => {
@@ -570,350 +675,355 @@ export default function CommunityDetailPage() {
 
       const signedTransaction = await wallet.signTransaction(transaction);
 
-      // 8. 트랜잭션 전송 및 확인
-      const signature = await connection.sendRawTransaction(signedTransaction.serialize());
-      await connection.confirmTransaction(signature);
-
-      console.log(`투표 제안 생성 완료, 트랜잭션 ID:`, signature);
-
-      // 9. 백엔드에 투표 제안 정보 저장
-      const proposalData = {
-        title: votingData.title,
-        description: votingData.description,
-        vote_type: votingData.vote_type,
-        options: votingData.options,
-        voting_period: votingData.voting_period,
-        proposer: publicKey.toString(),
-        start_time: Math.floor(Date.now() / 1000),
-        end_time: Math.floor(Date.now() / 1000) + votingData.voting_period,
-        votes: []
-      };
-
-      await axios.post(`http://localhost:8080/api/dao/proposal?pda=${communityId}`, proposalData);
-
-      return signature;
-    } catch (error) {
-      console.error("투표 제안 생성 중 오류 발생:", error);
-      throw new Error("투표 제안 생성에 실패했습니다.");
-    }
-  };
-
-  // 투표 제안 핸들러
-  const handleCreateVoteProposal = async (votingData: VotingData) => {
-    try {
-      setIsSubmittingVote(true);
-      await createVoteProposal(votingData);
-      setIsVotingModalOpen(false);
-
-      // 제안 목록 새로고침
-      const updatedProposals = await fetchCommunityProposals(communityId);
-      setProposals(updatedProposals);
-
-      // 화면에 성공 메시지 표시
-      alert("투표 제안이 성공적으로 생성되었습니다!");
-    } catch (error) {
-      console.error("투표 제안 생성 오류:", error);
-      alert("투표 제안 생성 중 오류가 발생했습니다.");
-    } finally {
-      setIsSubmittingVote(false);
-    }
-  };
-
-  // 투표 참여 함수
-  const castVote = async (proposalId: number, optionIndex: number) => {
-    if (!publicKey) {
-      throw new Error("지갑이 연결되어 있지 않습니다.");
-    }
-
-    try {
-      // 1. PublicKey 객체 생성
-      const daoPda = new PublicKey(communityId);
-
-      // 2. 솔라나 연결 설정
-      const connection = new Connection("https://api.devnet.solana.com", "confirmed");
-
-      // 3. 투표 참여 명령어 생성
-      const castVoteInstruction = createCastVoteInstruction(
-        publicKey,
-        daoPda,
-        proposalId,
-        optionIndex
-      );
-
-      // 4. 트랜잭션 생성
-      const transaction = new Transaction();
-
-      // 5. 최근 블록해시 가져오기
-      const { blockhash } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = publicKey;
-
-      // 6. 인스트럭션 추가
-      transaction.add(castVoteInstruction);
-
-      // 7. 지갑으로 트랜잭션 서명
-      if (!wallet.signTransaction) {
-        throw new Error("지갑이 서명 기능을 지원하지 않습니다.");
-      }
-
-      const signedTransaction = await wallet.signTransaction(transaction);
-
-      // 8. 트랜잭션 전송 및 확인
-      const signature = await connection.sendRawTransaction(signedTransaction.serialize());
-      await connection.confirmTransaction(signature);
-
-      console.log(`투표 참여 완료, 트랜잭션 ID:`, signature);
-
-      return signature;
-    } catch (error) {
-      console.error("투표 참여 중 오류 발생:", error);
-      throw new Error("투표 참여에 실패했습니다.");
-    }
-  };
-
-
-  const handleCastVote = async (proposalId: number, optionIndex: number) => {
-    try {
-      await castVote(proposalId, optionIndex);
-      setSelectedProposal(null);
+            // 8. 트랜잭션 전송 및 확인
+            const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+            await connection.confirmTransaction(signature);
       
-      // 제안 목록 새로고침
-      const updatedProposals = await fetchCommunityProposals(communityId);
-      setProposals(updatedProposals);
+            console.log(`투표 제안 생성 완료, 트랜잭션 ID:`, signature);
       
-      // 화면에 성공 메시지 표시
-      alert("투표가 성공적으로 처리되었습니다!");
-    } catch (error) {
-      console.error("투표 처리 오류:", error);
-      alert("투표 처리 중 오류가 발생했습니다.");
-    }
-  };
-
-
-
-
-  
-// 기존 useEffect 함수 수정:
-  useEffect(() => {
-    const loadCommunityData = async () => {
-      if (!communityId) return;
-
-      try {
-        setIsLoading(true);
-        setError(null);
-
-        // 1. 커뮤니티 기본 데이터 가져오기 (기존 코드)
-        const data = await fetchCommunityData(communityId);
-        if (!data) {
-          setError("Community not found");
-          setIsLoading(false);
-          return;
-        }
-        setCommunityData(data);
-
-        // 2. 커뮤니티 상세 정보 가져오기 (기존 코드)
-        const details = await fetchCommunityDetails(communityId);
-        if (!details || Object.keys(details).length === 0) {
-          setCommunityDetails({
-            name: `Community ${communityId.slice(0, 6)}...`,
-            description: "A community on the Solana blockchain"
-          });
-        } else {
-          setCommunityDetails(details);
-        }
-
-        // 3. 예치자 정보 가져오기 (기존 코드)
-        const depositorsData = await fetchCommunityDepositors(communityId);
-        setDepositors(depositorsData);
-
-        // 4. 게시물 가져오기 (기존 코드)
-        const postsData = await fetchCommunityPosts(communityId);
-        setPosts(postsData);
-
-        // 5. 제안(프로포절) 가져오기 (추가 코드)
-        const proposalsData = await fetchCommunityProposals(communityId);
-        setProposals(proposalsData);
-
-        setIsLoading(false);
-      } catch (err) {
-        console.error("Error loading community data:", err);
-        setError(err.message || "Failed to load community data");
-        setIsLoading(false);
-      }
-    };
-
-    loadCommunityData();
-  }, [communityId]);
-
-  
-  // 커뮤니티 정보 가공
-  const communityInfo = useMemo(() => {
-    if (!communityData) return null;
-    
-    // 예치자 정보에서 직접 합산
-    const totalLamportsFromDepositors = depositors.reduce((sum, depositor) => {
-      return sum + (depositor.amount || 0);
-    }, 0);
-    
-    // Lamports를 SOL로 변환
-    const totalLamportsFromAPI = communityData.total_deposit || 0;
-    const totalLamports = totalLamportsFromDepositors > 0 ? 
-      totalLamportsFromDepositors : totalLamportsFromAPI;
-    const bountyAmount = totalLamports / LAMPORTS_PER_SOL;
-    
-    // 시간 제한 초 단위로 저장 (원본 값)
-    const timeLimitSeconds = communityData.time_limit || 108000; // 기본값 30시간(108000초)
-    
-    // 시간 제한을 분 단위로 변환 (초 -> 분) - 표시용
-    const timeLimitMinutes = Math.round(timeLimitSeconds / 60);
-    
-    // 기본 수수료를 SOL로 변환
-    const baseFee = (communityData.base_fee || 0) / LAMPORTS_PER_SOL;
-    
-    // 마지막 활동 시간 처리
-    let lastActivityTime = null;
-    let lastActivityTimeFormatted = "Never";
-    let expirationTimeValue = null;
-    let expirationTimeFormatted = "Unknown";
-    
-    if (communityData.last_activity_timestamp && !isNaN(Number(communityData.last_activity_timestamp))) {
-      const timestamp = Number(communityData.last_activity_timestamp);
-      lastActivityTime = new Date(timestamp * 1000); // 초 단위를 밀리초로 변환
+            // 9. 백엔드에 투표 제안 정보 저장
+            const proposalData = {
+              title: votingData.title,
+              description: votingData.description,
+              vote_type: votingData.vote_type,
+              options: votingData.options,
+              voting_period: votingData.voting_period,
+              proposer: publicKey.toString(),
+              start_time: Math.floor(Date.now() / 1000),
+              end_time: Math.floor(Date.now() / 1000) + votingData.voting_period,
+              votes: []
+            };
       
-      // 날짜 포맷팅 (예: "Mar 9, 2025, 4:01 PM")
-      lastActivityTimeFormatted = new Intl.DateTimeFormat('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      }).format(lastActivityTime);
+            await axios.post(`${API_BASE_URL}/api/dao/proposal?pda=${communityId}`, proposalData);
       
-      // 종료 시간 계산 (마지막 활동 시간 + time_limit)
-      expirationTimeValue = new Date((timestamp + timeLimitSeconds) * 1000);
+            // 전체 데이터를 다시 로드하여 일관성 유지
+            const allData = await fetchCommunityAllData(communityId);
+            setProposals(allData.proposals);
       
-      expirationTimeFormatted = new Intl.DateTimeFormat('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      }).format(expirationTimeValue);
+            return signature;
+          } catch (error) {
+            console.error("투표 제안 생성 중 오류 발생:", error);
+            throw new Error("투표 제안 생성에 실패했습니다.");
+          }
+        };
       
-      // 종료 시간 상태 업데이트
-      setExpirationTime(expirationTimeValue);
-    }
-    
-    const communityName = communityDetails?.name || `Community ${communityId.slice(0, 6)}...`;
-    const communityDescription = communityDetails?.description || `A community on the Solana blockchain`;
-    
-    return {
-      name: communityName,
-      description: communityDescription,
-      bountyAmount,
-      gradient: `bg-gradient-to-r from-${getRandomColor()}-400 to-${getRandomColor()}-500`,
-      timeLimit: timeLimitMinutes,
-      timeLimitSeconds,
-      baseFee,
-      lastActivityTime,
-      lastActivityTimeFormatted,
-      expirationTime: expirationTimeValue,
-      expirationTimeFormatted,
-      depositerCount: communityData.depositor_count || 0,
-      challengerCount: posts.length || 0,
-      admin: communityData.admin
-    };
-  }, [communityData, communityDetails, depositors, posts, communityId]);
-  
-  // 실시간 카운트다운 업데이트
+        // 투표 제안 핸들러
+        const handleCreateVoteProposal = async (votingData: VotingData) => {
+          try {
+            setIsSubmittingVote(true);
+            await createVoteProposal(votingData);
+            setIsVotingModalOpen(false);
+      
+            // 화면에 성공 메시지 표시
+            alert("투표 제안이 성공적으로 생성되었습니다!");
+          } catch (error) {
+            console.error("투표 제안 생성 오류:", error);
+            alert("투표 제안 생성 중 오류가 발생했습니다.");
+          } finally {
+            setIsSubmittingVote(false);
+          }
+        };
+      
+        // 투표 참여 함수
+        const castVote = async (proposalId: number, optionIndex: number) => {
+          if (!publicKey) {
+            throw new Error("지갑이 연결되어 있지 않습니다.");
+          }
+      
+          try {
+            // 1. PublicKey 객체 생성
+            const daoPda = new PublicKey(communityId);
+      
+            // 2. 솔라나 연결 설정
+            const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+      
+            // 3. 투표 참여 명령어 생성
+            const castVoteInstruction = createCastVoteInstruction(
+              publicKey,
+              daoPda,
+              proposalId,
+              optionIndex
+            );
+      
+            // 4. 트랜잭션 생성
+            const transaction = new Transaction();
+      
+            // 5. 최근 블록해시 가져오기
+            const { blockhash } = await connection.getLatestBlockhash();
+            transaction.recentBlockhash = blockhash;
+            transaction.feePayer = publicKey;
+      
+            // 6. 인스트럭션 추가
+            transaction.add(castVoteInstruction);
+      
+            // 7. 지갑으로 트랜잭션 서명
+            if (!wallet.signTransaction) {
+              throw new Error("지갑이 서명 기능을 지원하지 않습니다.");
+            }
+      
+            const signedTransaction = await wallet.signTransaction(transaction);
+      
+            // 8. 트랜잭션 전송 및 확인
+            const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+            await connection.confirmTransaction(signature);
+      
+            console.log(`투표 참여 완료, 트랜잭션 ID:`, signature);
+      
+            // 투표 정보 백엔드에 저장 (백엔드 API 구현 필요)
+            const voteData = {
+              proposal_id: proposalId,
+              voter: publicKey.toString(),
+              option_index: optionIndex,
+              voting_power: 1 // 실제 투표력은 백엔드에서 계산
+            };
+            
+            await axios.post(`${API_BASE_URL}/api/dao/vote?pda=${communityId}`, voteData);
+      
+            // 전체 데이터를 다시 로드하여 일관성 유지
+            const allData = await fetchCommunityAllData(communityId);
+            setProposals(allData.proposals);
+      
+            return signature;
+          } catch (error) {
+            console.error("투표 참여 중 오류 발생:", error);
+            throw new Error("투표 참여에 실패했습니다.");
+          }
+        };
+      
+        const handleCastVote = async (proposalId: number, optionIndex: number) => {
+          try {
+            await castVote(proposalId, optionIndex);
+            setSelectedProposal(null);
+            
+            // 화면에 성공 메시지 표시
+            alert("투표가 성공적으로 처리되었습니다!");
+          } catch (error) {
+            console.error("투표 처리 오류:", error);
+            alert("투표 처리 중 오류가 발생했습니다.");
+          }
+        };
+      
+        // 데이터 로딩 통합 useEffect - 중요한 개선 부분
 
-// 실시간 카운트다운 업데이트
-useEffect(() => {
-  if (!expirationTime) return;
-  
-  let interval; // 여기에 interval 변수를 먼저 선언합니다
-  
-  const updateRemainingTime = () => {
-    const now = new Date();
-    const diffInSeconds = Math.floor((expirationTime - now) / 1000);
-    
-    if (diffInSeconds <= 0) {
-      setIsExpired(true);
-      setTimeRemaining("Expired");
-      if (interval) clearInterval(interval);
-    } else {
-      setIsExpired(false);
-      
-      // 남은 시간 계산 (일, 시간, 분)
-      const days = Math.floor(diffInSeconds / 86400);
-      const hours = Math.floor((diffInSeconds % 86400) / 3600);
-      const minutes = Math.floor((diffInSeconds % 3600) / 60);
-      
-      if (days > 0) {
-        setTimeRemaining(`${days}d ${hours}h remaining`);
-      } else if (hours > 0) {
-        setTimeRemaining(`${hours}h ${minutes}m remaining`);
-      } else {
-        setTimeRemaining(`${minutes}m remaining`);
-      }
-    }
-  };
-  
-  // 초기 업데이트
-  updateRemainingTime();
-  
-  // 1초마다 업데이트
-  interval = setInterval(updateRemainingTime, 1000);
-  
-  // 컴포넌트 언마운트 시 인터벌 정리
-  return () => {
-    if (interval) clearInterval(interval);
-  };
-}, [expirationTime]);
 
-  
-  
-  // 랜덤 색상 생성 함수
-  function getRandomColor() {
-    const colors = ['blue', 'green', 'red', 'yellow', 'purple', 'pink', 'indigo', 'teal', 'orange', 'cyan'];
-    return colors[Math.floor(Math.random() * colors.length)];
-  }
-  
-
-
-  const handleLikePost = (postId) => {
-    if (!publicKey) return;
-    
-    setPosts(posts.map(post => {
-      if (post.id === postId) {
-        // Check if the user has already liked the post
-        const alreadyLiked = post.likedBy?.includes(publicKey.toString());
+        useEffect(() => {
+          if (dataLoadedRef.current) return;
+          
+          const loadCommunityData = async () => {
+            if (!communityId) return;
         
-        if (alreadyLiked) {
-          // Unlike the post
-          return {
-            ...post,
-            likes: (post.likes || 0) - 1,
-            likedBy: (post.likedBy || []).filter(addr => addr !== publicKey.toString())
+            try {
+              setIsLoading(true);
+              setError(null);
+              
+              console.log("Loading data for community ID:", communityId); // 디버깅용 로그 추가
+              
+              // 모든 데이터를 한 번에 가져오기
+              const allData = await fetchCommunityAllData(communityId);
+              
+              // 상태 업데이트
+              setCommunityDetails(allData.details);
+              setCommunityData(allData.communityData);
+              setDepositors(allData.depositors);
+              setPosts(allData.posts);
+              setProposals(allData.proposals);
+              
+              // 일관된 그라데이션 색상 설정 (ID 기반)
+              setCommunityGradient(getConsistentColor(communityId));
+              
+              // 데이터 로드 완료 표시
+              dataLoadedRef.current = true;
+              
+              // 시간 관련 데이터 계산 및 설정
+              if (allData.communityData) {
+                const timeLimitSeconds = allData.communityData.time_limit || 108000;
+                const timestamp = Number(allData.communityData.last_activity_timestamp);
+                
+                console.log("타임스탬프 값:", timestamp); // 실제 타임스탬프 값 확인
+                console.log("시간 제한(초):", timeLimitSeconds);
+                
+                if (timestamp && !isNaN(timestamp)) {
+                  const expiryTime = new Date((timestamp + timeLimitSeconds) * 1000);
+                  console.log("계산된 만료 시간:", expiryTime.toISOString());
+                  setExpirationTime(expiryTime);
+                  
+                  // 만료 여부 초기 설정
+                  const now = new Date();
+                  setIsExpired(now > expiryTime);
+                }
+              }
+              
+              setIsLoading(false);
+            } catch (err) {
+              console.error("Error loading community data:", err);
+              setError(err.message || "Failed to load community data");
+              setIsLoading(false);
+            }
           };
-        } else {
-          // Like the post
+        
+          loadCommunityData();
+        }, [communityId]);
+
+        
+
+        
+      
+        // 커뮤니티 정보 가공 - useMemo로 성능 최적화
+        const communityInfo = useMemo(() => {
+          if (!communityData) return null;
+          
+          // 예치자 정보에서 직접 합산 - 더 정확한 데이터
+          const totalLamportsFromDepositors = depositors.reduce((sum, depositor) => {
+            return sum + (depositor.amount || 0);
+          }, 0);
+          
+          // Lamports를 SOL로 변환
+          const totalLamportsFromAPI = communityData.total_deposit || 0;
+          const totalLamports = totalLamportsFromDepositors > 0 ? 
+            totalLamportsFromDepositors : totalLamportsFromAPI;
+          const bountyAmount = totalLamports / LAMPORTS_PER_SOL;
+          
+          // 시간 제한 초 단위로 저장 (원본 값)
+          const timeLimitSeconds = communityData.time_limit || 108000; // 기본값 30시간(108000초)
+          
+          // 시간 제한을 분 단위로 변환 (초 -> 분) - 표시용
+          const timeLimitMinutes = Math.round(timeLimitSeconds / 60);
+          
+          // 기본 수수료를 SOL로 변환
+          const baseFee = (communityData.base_fee || 0) / LAMPORTS_PER_SOL;
+          
+          // 마지막 활동 시간 처리
+          let lastActivityTime = null;
+          let lastActivityTimeFormatted = "Never";
+          let expirationTimeValue = expirationTime; // 외부 상태에서 가져오기
+          let expirationTimeFormatted = "Unknown";
+          
+          if (communityData.last_activity_timestamp && !isNaN(Number(communityData.last_activity_timestamp))) {
+            const timestamp = Number(communityData.last_activity_timestamp);
+            lastActivityTime = new Date(timestamp * 1000); // 초 단위를 밀리초로 변환
+            
+            // 날짜 포맷팅 (예: "Mar 9, 2025, 4:01 PM")
+            lastActivityTimeFormatted = new Intl.DateTimeFormat('en-US', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            }).format(lastActivityTime);
+            
+            if (expirationTimeValue) {
+              expirationTimeFormatted = new Intl.DateTimeFormat('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+              }).format(expirationTimeValue);
+            }
+          }
+          
+          const communityName = communityDetails?.name || `Community ${communityId.slice(0, 6)}...`;
+          const communityDescription = communityDetails?.description || `A community on the Solana blockchain`;
+          
           return {
-            ...post,
-            likes: (post.likes || 0) + 1,
-            likedBy: [...(post.likedBy || []), publicKey.toString()]
+            name: communityName,
+            description: communityDescription,
+            bountyAmount,
+            gradient: communityGradient, // 일관된 그라데이션 사용
+            timeLimit: timeLimitMinutes,
+            timeLimitSeconds,
+            baseFee,
+            lastActivityTime,
+            lastActivityTimeFormatted,
+            expirationTime: expirationTimeValue,
+            expirationTimeFormatted,
+            depositerCount: depositors.length, // 실제 배열 길이 사용
+            challengerCount: posts.length || 0,
+            admin: communityData.admin
           };
-        }
-      }
-      return post;
-    }));
-    
-    // 실제 API를 통해 좋아요 업데이트 (백엔드 구현 필요)
-    // updatePostLike(postId, publicKey.toString());
-  };
-  
+        }, [communityData, communityDetails, depositors, posts, communityId, communityGradient, expirationTime]);
+      
+        // 실시간 카운트다운 업데이트 - 일정 간격으로 업데이트
+        useEffect(() => {
+          if (!expirationTime) return;
+          
+          // 초기 업데이트
+          const updateRemainingTime = () => {
+            const now = new Date();
+            const diffInSeconds = Math.floor((expirationTime - now) / 1000);
+            
+            if (diffInSeconds <= 0) {
+              setIsExpired(true);
+              setTimeRemaining("Expired");
+            } else {
+              setIsExpired(false);
+              
+              // 남은 시간 계산 (일, 시간, 분)
+              const days = Math.floor(diffInSeconds / 86400);
+              const hours = Math.floor((diffInSeconds % 86400) / 3600);
+              const minutes = Math.floor((diffInSeconds % 3600) / 60);
+              
+              if (days > 0) {
+                setTimeRemaining(`${days}d ${hours}h remaining`);
+              } else if (hours > 0) {
+                setTimeRemaining(`${hours}h ${minutes}m remaining`);
+              } else {
+                setTimeRemaining(`${minutes}m remaining`);
+              }
+            }
+          };
+          
+          updateRemainingTime();
+          
+          // 60초마다 업데이트 (매초 업데이트하면 성능 저하 가능성)
+          const interval = setInterval(updateRemainingTime, 60000);
+          
+          return () => clearInterval(interval);
+        }, [expirationTime]);
+      
+        // 좋아요 처리 핸들러
+        const handleLikePost = async (postId) => {
+          if (!publicKey) return;
+          
+          try {
+            // 즉시 UI 업데이트 (낙관적 업데이트)
+            setPosts(posts.map(post => {
+              if (post.id === postId) {
+                // 이미 좋아요를 눌렀는지 확인
+                const alreadyLiked = post.likedBy?.includes(publicKey.toString());
+                
+                if (alreadyLiked) {
+                  // 좋아요 취소
+                  return {
+                    ...post,
+                    likes: Math.max((post.likes || 0) - 1, 0),
+                    likedBy: (post.likedBy || []).filter(addr => addr !== publicKey.toString())
+                  };
+                } else {
+                  // 좋아요 추가
+                  return {
+                    ...post,
+                    likes: (post.likes || 0) + 1,
+                    likedBy: [...(post.likedBy || []), publicKey.toString()]
+                  };
+                }
+              }
+              return post;
+            }));
+            
+            // 백엔드 API 호출
+            await updatePostLike(communityId, postId, publicKey.toString());
+          } catch (error) {
+            console.error("좋아요 처리 중 오류 발생:", error);
+            // 실패 시 원래 상태로 롤백 (필요한 경우)
+            const allData = await fetchCommunityAllData(communityId);
+            setPosts(allData.posts);
+          }
+        };
+        
+
   const formatDate = (dateString) => {
     if (!dateString) return "Unknown";
     
