@@ -535,44 +535,7 @@ const communitiesWithDetails = useMemo(() => {
           )}
           
           {/* Joined Communities */}
-          <div className="mt-12">
-            <h2 className={`text-xl font-bold ${isPixelMode ? 'text-teal-800 font-silkscreen uppercase' : 'text-teal-900 dark:text-teal-200'} mb-4`}>Your DAO List</h2>
-            {joinedCommunities.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-
-                  {filteredAndSortedCommunities
-                    .slice((currentPage - 1) * communitiesPerPage, currentPage * communitiesPerPage)
-                    .map((community) => (
-                    <Link href={`/app/community/${community.id}`} key={community.id}>
-                      <div className="cursor-pointer h-full">
-                        <CommunityCard
-                          name={community.name}
-                          description={community.description}
-                          bountyAmount={community.bountyAmount}
-                          gradient={community.gradient}
-                          isPixelMode={isPixelMode}
-                          lastActivityTimeFormatted={community.lastActivityTimeFormatted}
-                          timeRemaining={community.timeRemaining}
-                          isExpired={community.isExpired}
-                          expirationTime={community.expirationTime} // 이 줄 추가
-                          onDeposit={(e) => handleDepositToCommunity(e, community.id)}
-                        />
-                      </div>
-                    </Link>
-                  ))}
-
-
-
-
-              </div>
-            ) : (
-              <div className={`${isPixelMode ? 'border-4 border-black' : ''} bg-white dark:bg-gray-800 rounded-xl shadow-md p-6 text-center`}>
-                <p className="text-gray-600 dark:text-gray-400">
-                  You haven&apos;t joined any communities yet. Join existing ones or create your own!
-                </p>
-              </div>
-            )}
-          </div>
+          
         </div>
       </main>
       

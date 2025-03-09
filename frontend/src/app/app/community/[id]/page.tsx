@@ -177,14 +177,19 @@ const fetchCommunityAllData = async (pda) => {
     } else {
       console.error(`Failed to fetch contents with status: ${contentsResponse.status}`);
     }
-    
+
     let proposals = [];
     if (proposalsResponse.ok) {
       const data = await proposalsResponse.json();
-      proposals = data.proposals || [];
+      // 각 제안에 고유 ID 추가
+      proposals = (data.proposals || []).map((proposal, index) => ({
+        ...proposal,
+        id: `proposal-${proposal.proposer}-${proposal.start_time}-${index}`
+      }));
     } else {
       console.error(`Failed to fetch proposals with status: ${proposalsResponse.status}`);
     }
+
     
     // 커뮤니티 상세 정보 직접 생성 (또는 별도의 API에서 가져옴)
     const details = {
@@ -218,10 +223,12 @@ interface DepositorData {
 interface VotingData {
   title: string;
   description: string;
-  vote_type: number;
-  options: string[];
-  voting_period: number;
+  vote_type: number; // 0: TimeLimit, 1: BaseFee, 2: AiModeration
+  new_value: number; // 새 값
+  voting_period: number; // 초 단위 투표 기간
+  options?: string[]; // 선택 사항 (기본값: ["찬성", "반대"])
 }
+
 
 // 프로그램 ID - 실제 배포된 프로그램 ID로 교체 필요
 const PROGRAM_ID = new PublicKey("G5658prSBac5RRSsy16qjvp9awxxpa7a4tsZZJrG8kjP");
@@ -450,19 +457,35 @@ export default function CommunityDetailPage() {
   const dataLoadedRef = useRef(false);
 
   // 예치금 전송 함수
+  // 예치금 전송 함수
   const depositToNewCommunity = async (pdaString: string, amount: number) => {
     if (!publicKey) {
       throw new Error("지갑이 연결되어 있지 않습니다.");
     }
 
     try {
-      // 1. PublicKey 객체 생성
+      // 1. 지갑 연결 및 기능 확인
+      if (!wallet) {
+        throw new Error("지갑이 연결되지 않았습니다. 먼저 지갑을 연결해주세요.");
+      }
+
+      if (!publicKey) {
+        throw new Error("공개키를 가져올 수 없습니다. 지갑 연결을 확인해주세요.");
+      }
+
+      // 명시적 지갑 서명 기능 확인
+      if (!wallet.adapter || typeof wallet.adapter.signTransaction !== 'function') {
+        console.error("지갑 어댑터:", wallet.adapter);
+        throw new Error("현재 지갑은 트랜잭션 서명 기능을 지원하지 않습니다. 다른 지갑을 사용해보세요.");
+      }
+
+      // 2. PublicKey 객체 생성
       const daoPda = new PublicKey(pdaString);
 
-      // 2. 솔라나 연결 설정
+      // 3. 솔라나 연결 설정
       const connection = new Connection("https://api.devnet.solana.com", "confirmed");
 
-      // 3. 예치 명령어 생성
+      // 4. 예치 명령어 생성
       const depositInstruction = createDepositInstruction(
         publicKey,
         daoPda,
@@ -472,27 +495,52 @@ export default function CommunityDetailPage() {
       // 디버깅용
       logBuffer(depositInstruction.data, "예치 명령 데이터");
 
-      // 4. 트랜잭션 생성
+      // 5. 트랜잭션 생성
       const transaction = new Transaction();
 
-      // 5. 최근 블록해시 가져오기 (트랜잭션 만료시간 설정)
+      // 6. 최근 블록해시 가져오기 (트랜잭션 만료시간 설정)
       const { blockhash } = await connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = publicKey;
 
-      // 6. 인스트럭션 추가
+      // 7. 인스트럭션 추가
       transaction.add(depositInstruction);
 
-      // 7. 트랜잭션 서명
-      const signedTransaction = await wallet.signTransaction(transaction);
+      // 8. 지갑으로 트랜잭션 서명 시도
+      console.log("트랜잭션 서명 시도 중...");
+      let signedTransaction;
 
-      // 8. 트랜잭션 전송 및 확인
+      try {
+        // 어댑터를 통한 직접 서명 시도
+        signedTransaction = await wallet.signTransaction(transaction);
+      } catch (signError) {
+        console.error("지갑 서명 중 오류:", signError);
+
+        // 백업 방법: 어댑터를 통한 서명 시도
+        if (wallet.adapter && typeof wallet.adapter.signTransaction === 'function') {
+          try {
+            signedTransaction = await wallet.adapter.signTransaction(transaction);
+          } catch (adapterError) {
+            console.error("어댑터 서명 중 오류:", adapterError);
+            throw new Error("트랜잭션 서명에 실패했습니다. 지갑이 잠겨있거나 권한이 없습니다.");
+          }
+        } else {
+          throw new Error("지갑 서명 기능을 사용할 수 없습니다. 지갑 재연결 후 다시 시도해주세요.");
+        }
+      }
+
+      if (!signedTransaction) {
+        throw new Error("서명된 트랜잭션을 생성하지 못했습니다.");
+      }
+
+      // 9. 트랜잭션 전송 및 확인
+      console.log("서명된 트랜잭션 전송 중...");
       const signature = await connection.sendRawTransaction(signedTransaction.serialize());
       await connection.confirmTransaction(signature);
 
       console.log(`${amount / LAMPORTS_PER_SOL} SOL 예치 완료, 트랜잭션 ID:`, signature);
 
-      // 9. 백엔드에 예치자 정보 저장
+      // 10. 백엔드에 예치자 정보 저장
       const currentTime = Math.floor(Date.now() / 1000);
       const lockPeriod = communityInfo.timeLimitSeconds; // 초 단위 타임리밋
 
@@ -505,7 +553,7 @@ export default function CommunityDetailPage() {
 
       await axios.post(`${API_BASE_URL}/api/dao/depositor?pda=${pdaString}`, depositorData);
 
-      // 10. 데이터 새로고침 - 전체 데이터를 다시 로드하여 일관성 유지
+      // 11. 데이터 새로고침 - 전체 데이터를 다시 로드하여 일관성 유지
       const allData = await fetchCommunityAllData(pdaString);
       setDepositors(allData.depositors);
       setCommunityData(allData.communityData);
@@ -516,6 +564,7 @@ export default function CommunityDetailPage() {
       throw new Error("예치금 처리에 실패했습니다.");
     }
   };
+
 
   // 예치 처리 핸들러
   const handleDeposit = async (amount: number) => {
@@ -637,75 +686,127 @@ export default function CommunityDetailPage() {
 
   
 
-  // 투표 제안 생성 함수
+
+// 투표 제안 생성 함수
   const createVoteProposal = async (votingData: VotingData) => {
     if (!publicKey) {
       throw new Error("지갑이 연결되어 있지 않습니다.");
     }
-
+  
     try {
-      // 1. PublicKey 객체 생성
+      // 1. 지갑 연결 및 기능 확인
+      if (!wallet) {
+        throw new Error("지갑이 연결되지 않았습니다. 먼저 지갑을 연결해주세요.");
+      }
+    
+      if (!publicKey) {
+        throw new Error("공개키를 가져올 수 없습니다. 지갑 연결을 확인해주세요.");
+      }
+    
+      // 2. PublicKey 객체 생성
       const daoPda = new PublicKey(communityId);
-
-      // 2. 솔라나 연결 설정
+    
+      // 3. 솔라나 연결 설정
       const connection = new Connection("https://api.devnet.solana.com", "confirmed");
-
-      // 3. 투표 생성 명령어 생성
+    
+      // 4. 투표 생성 명령어 생성
       const voteInstruction = createVoteInstruction(
         publicKey,
         daoPda,
         votingData
       );
-
-      // 4. 트랜잭션 생성
+    
+      // 5. 트랜잭션 생성
       const transaction = new Transaction();
-
-      // 5. 최근 블록해시 가져오기
+    
+      // 6. 최근 블록해시 가져오기
       const { blockhash } = await connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = publicKey;
-
-      // 6. 인스트럭션 추가
+    
+      // 7. 인스트럭션 추가
       transaction.add(voteInstruction);
-
-      // 7. 지갑으로 트랜잭션 서명
-      if (!wallet.signTransaction) {
-        throw new Error("지갑이 서명 기능을 지원하지 않습니다.");
+    
+      // 8. 지갑으로 트랜잭션 서명 시도
+      console.log("트랜잭션 서명 시도 중...");
+      let signedTransaction;
+      
+      try {
+        // 어댑터를 통한 서명 시도
+        signedTransaction = await wallet.adapter.signTransaction(transaction);
+      } catch (signError) {
+        console.error("지갑 서명 중 오류:", signError);
+        
+        // 다른 방법 시도
+        try {
+          // sendTransaction 메서드 사용 시도
+          const signature = await wallet.adapter.sendTransaction(transaction, connection);
+          console.log("서명된 트랜잭션 전송 완료:", signature);
+          
+          // 백엔드에 투표 제안 정보 저장 - 백엔드 구조체와 정확히 일치하도록
+          const proposalData = {
+            id: Date.now(), // 현재 시간을 ID로 사용 (밀리초 단위)
+            proposal_type: votingData.vote_type,
+            new_value: votingData.new_value,
+            voting_end_time: Math.floor(Date.now() / 1000) + votingData.voting_period,
+            yes_votes: 0,
+            no_votes: 0,
+            is_executed: false
+          };
+        
+          console.log("백엔드로 전송할 데이터:", proposalData);
+          await axios.post(`${API_BASE_URL}/api/dao/proposal?pda=${communityId}`, proposalData);
+        
+          // 전체 데이터를 다시 로드하여 일관성 유지
+          const allData = await fetchCommunityAllData(communityId);
+          setProposals(allData.proposals);
+        
+          return signature;
+        } catch (sendError) {
+          console.error("트랜잭션 전송 중 오류:", sendError);
+          throw new Error("트랜잭션 서명 및 전송에 실패했습니다.");
+        }
       }
+    
+      if (!signedTransaction) {
+        throw new Error("서명된 트랜잭션을 생성하지 못했습니다.");
+      }
+    
+      // 9. 트랜잭션 전송 및 확인
+      console.log("서명된 트랜잭션 전송 중...");
+      const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+      await connection.confirmTransaction(signature);
+    
+      console.log(`투표 제안 생성 완료, 트랜잭션 ID:`, signature);
+    
+      // 10. 백엔드에 투표 제안 정보 저장 - 백엔드 구조체와 정확히 일치하도록
+      const proposalData = {
+        id: Date.now(), // 현재 시간을 ID로 사용 (밀리초 단위)
+        proposal_type: votingData.vote_type,
+        new_value: votingData.new_value,
+        voting_end_time: Math.floor(Date.now() / 1000) + votingData.voting_period,
+        yes_votes: 0,
+        no_votes: 0,
+        is_executed: false
+      };
+    
+      console.log("백엔드로 전송할 데이터:", proposalData);
+      await axios.post(`${API_BASE_URL}/api/dao/proposal?pda=${communityId}`, proposalData);
+    
+      // 전체 데이터를 다시 로드하여 일관성 유지
+      const allData = await fetchCommunityAllData(communityId);
+      setProposals(allData.proposals);
+    
+      return signature;
+    } catch (error) {
+      console.error("투표 제안 생성 중 오류 발생:", error);
+      throw new Error("투표 제안 생성에 실패했습니다.");
+    }
+  };
 
-      const signedTransaction = await wallet.signTransaction(transaction);
 
-            // 8. 트랜잭션 전송 및 확인
-            const signature = await connection.sendRawTransaction(signedTransaction.serialize());
-            await connection.confirmTransaction(signature);
-      
-            console.log(`투표 제안 생성 완료, 트랜잭션 ID:`, signature);
-      
-            // 9. 백엔드에 투표 제안 정보 저장
-            const proposalData = {
-              title: votingData.title,
-              description: votingData.description,
-              vote_type: votingData.vote_type,
-              options: votingData.options,
-              voting_period: votingData.voting_period,
-              proposer: publicKey.toString(),
-              start_time: Math.floor(Date.now() / 1000),
-              end_time: Math.floor(Date.now() / 1000) + votingData.voting_period,
-              votes: []
-            };
-      
-            await axios.post(`${API_BASE_URL}/api/dao/proposal?pda=${communityId}`, proposalData);
-      
-            // 전체 데이터를 다시 로드하여 일관성 유지
-            const allData = await fetchCommunityAllData(communityId);
-            setProposals(allData.proposals);
-      
-            return signature;
-          } catch (error) {
-            console.error("투표 제안 생성 중 오류 발생:", error);
-            throw new Error("투표 제안 생성에 실패했습니다.");
-          }
-        };
+
+ 
       
         // 투표 제안 핸들러
         const handleCreateVoteProposal = async (votingData: VotingData) => {
@@ -725,70 +826,108 @@ export default function CommunityDetailPage() {
         };
       
         // 투표 참여 함수
+        // 투표 참여 함수
         const castVote = async (proposalId: number, optionIndex: number) => {
           if (!publicKey) {
             throw new Error("지갑이 연결되어 있지 않습니다.");
           }
-      
+        
           try {
-            // 1. PublicKey 객체 생성
+            // 1. 지갑 연결 및 기능 확인
+            if (!wallet) {
+              throw new Error("지갑이 연결되지 않았습니다. 먼저 지갑을 연결해주세요.");
+            }
+          
+            if (!publicKey) {
+              throw new Error("공개키를 가져올 수 없습니다. 지갑 연결을 확인해주세요.");
+            }
+          
+            // 명시적 지갑 서명 기능 확인
+            if (!wallet.adapter || typeof wallet.adapter.signTransaction !== 'function') {
+              console.error("지갑 어댑터:", wallet.adapter);
+              throw new Error("현재 지갑은 트랜잭션 서명 기능을 지원하지 않습니다. 다른 지갑을 사용해보세요.");
+            }
+          
+            // 2. PublicKey 객체 생성
             const daoPda = new PublicKey(communityId);
-      
-            // 2. 솔라나 연결 설정
+          
+            // 3. 솔라나 연결 설정
             const connection = new Connection("https://api.devnet.solana.com", "confirmed");
-      
-            // 3. 투표 참여 명령어 생성
+          
+            // 4. 투표 참여 명령어 생성
             const castVoteInstruction = createCastVoteInstruction(
               publicKey,
               daoPda,
               proposalId,
               optionIndex
             );
-      
-            // 4. 트랜잭션 생성
+          
+            // 5. 트랜잭션 생성
             const transaction = new Transaction();
-      
-            // 5. 최근 블록해시 가져오기
+          
+            // 6. 최근 블록해시 가져오기
             const { blockhash } = await connection.getLatestBlockhash();
             transaction.recentBlockhash = blockhash;
             transaction.feePayer = publicKey;
-      
-            // 6. 인스트럭션 추가
+          
+            // 7. 인스트럭션 추가
             transaction.add(castVoteInstruction);
-      
-            // 7. 지갑으로 트랜잭션 서명
-            if (!wallet.signTransaction) {
-              throw new Error("지갑이 서명 기능을 지원하지 않습니다.");
+          
+            // 8. 지갑으로 트랜잭션 서명 시도
+            console.log("트랜잭션 서명 시도 중...");
+            let signedTransaction;
+
+            try {
+              // 어댑터를 통한 직접 서명 시도
+              signedTransaction = await wallet.signTransaction(transaction);
+            } catch (signError) {
+              console.error("지갑 서명 중 오류:", signError);
+
+              // 백업 방법: 어댑터를 통한 서명 시도
+              if (wallet.adapter && typeof wallet.adapter.signTransaction === 'function') {
+                try {
+                  signedTransaction = await wallet.adapter.signTransaction(transaction);
+                } catch (adapterError) {
+                  console.error("어댑터 서명 중 오류:", adapterError);
+                  throw new Error("트랜잭션 서명에 실패했습니다. 지갑이 잠겨있거나 권한이 없습니다.");
+                }
+              } else {
+                throw new Error("지갑 서명 기능을 사용할 수 없습니다. 지갑 재연결 후 다시 시도해주세요.");
+              }
             }
-      
-            const signedTransaction = await wallet.signTransaction(transaction);
-      
-            // 8. 트랜잭션 전송 및 확인
+          
+            if (!signedTransaction) {
+              throw new Error("서명된 트랜잭션을 생성하지 못했습니다.");
+            }
+          
+            // 9. 트랜잭션 전송 및 확인
+            console.log("서명된 트랜잭션 전송 중...");
             const signature = await connection.sendRawTransaction(signedTransaction.serialize());
             await connection.confirmTransaction(signature);
-      
+          
             console.log(`투표 참여 완료, 트랜잭션 ID:`, signature);
-      
-            // 투표 정보 백엔드에 저장 (백엔드 API 구현 필요)
+          
+            // 투표 정보 백엔드에 저장
             const voteData = {
               proposal_id: proposalId,
               voter: publicKey.toString(),
               option_index: optionIndex,
               voting_power: 1 // 실제 투표력은 백엔드에서 계산
             };
-            
+
             await axios.post(`${API_BASE_URL}/api/dao/vote?pda=${communityId}`, voteData);
-      
+          
             // 전체 데이터를 다시 로드하여 일관성 유지
             const allData = await fetchCommunityAllData(communityId);
             setProposals(allData.proposals);
-      
+          
             return signature;
           } catch (error) {
             console.error("투표 참여 중 오류 발생:", error);
             throw new Error("투표 참여에 실패했습니다.");
           }
         };
+
       
         const handleCastVote = async (proposalId: number, optionIndex: number) => {
           try {
@@ -1099,10 +1238,31 @@ const DepositModal = ({ isOpen, onClose, onSubmit, isPixelMode, minAmount = 0.01
   const [amount, setAmount] = useState<number>(0.1);
 
   // DepositModal 컴포넌트 (계속)
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(amount * LAMPORTS_PER_SOL); // Lamports로 변환
+    setIsLoading(true);
+    
+    try {
+      const votingData: VotingData = {
+        title,
+        description,
+        vote_type: voteType,
+        new_value: newValue,
+        voting_period: votingPeriod * 86400, // 일 -> 초 변환
+        options: ["찬성", "반대"] // 기본 옵션
+      };
+      
+      await createVoteProposal(votingData);
+      onClose();
+      toast.success("투표 제안이 성공적으로 생성되었습니다!");
+    } catch (error) {
+      console.error("투표 제안 생성 오류:", error);
+      toast.error(error instanceof Error ? error.message : "투표 제안 생성 중 오류가 발생했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
   };
+  
   
   if (!isOpen) return null;
   
@@ -1177,9 +1337,16 @@ const DepositModal = ({ isOpen, onClose, onSubmit, isPixelMode, minAmount = 0.01
 const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [votingPeriod, setVotingPeriod] = useState(7);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // 여기에 새로운 상태 변수 추가
   const [voteType, setVoteType] = useState<number>(0);
-  const [options, setOptions] = useState<string[]>(["", ""]);
-  const [votingPeriod, setVotingPeriod] = useState<number>(7 * 24 * 60 * 60); // 1주일 (초)
+  const [newValue, setNewValue] = useState<number>(0);
+
+  const [options, setOptions] = useState<string[]>(["찬성", "반대"]);
+
+
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1196,6 +1363,24 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
   const handleAddOption = () => {
     setOptions([...options, ""]);
   };
+
+  // 옵션 추가 함수
+const addOption = () => {
+  setOptions([...options, ""]);
+};
+
+// 옵션 변경 함수
+
+// 옵션 삭제 함수
+const removeOption = (index: number) => {
+  if (options.length <= 2) {
+    return; // 최소 2개의 옵션 유지
+  }
+  const newOptions = [...options];
+  newOptions.splice(index, 1);
+  setOptions(newOptions);
+};
+
   
   const handleOptionChange = (index: number, value: string) => {
     const newOptions = [...options];
@@ -1208,7 +1393,7 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
     const newOptions = options.filter((_, i) => i !== index);
     setOptions(newOptions);
   };
-  
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -1223,10 +1408,12 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
       title,
       description,
       vote_type: voteType,
+      new_value: newValue, // 이 부분 추가
       options: validOptions,
       voting_period: votingPeriod
     });
   };
+  
   
   // 투표 타입 옵션 목록
   const voteTypes = [
@@ -1247,45 +1434,93 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
   
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black opacity-50" onClick={onClose}></div>
-      <div className={`
-        relative z-10 w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto
-        ${isPixelMode ? 'border-4 border-black bg-white' : 'bg-white dark:bg-gray-800 rounded-xl shadow-xl'}
-      `}>
-        <h2 className={`text-xl font-bold mb-4 ${isPixelMode ? 'uppercase font-silkscreen' : ''}`}>
-          Create Vote Proposal
-        </h2>
-        
-        <form onSubmit={handleSubmit}>
-          {/* 제목 입력 */}
-          <div className="mb-4">
-            <label className={`block mb-2 ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
-              Title
-            </label>
-            <input 
-              type="text" 
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className={`
-                w-full px-3 py-2
-                ${isPixelMode 
-                  ? 'border-2 border-black font-silkscreen' 
-                  : 'border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white'}
-              `}
-              required
-            />
+  <div className="fixed inset-0 bg-black opacity-50" onClick={onClose}></div>
+  <div className={`
+    relative z-10 w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto
+    ${isPixelMode ? 'border-4 border-black bg-white' : 'bg-white dark:bg-gray-800 rounded-xl shadow-xl'}
+  `}>
+    <h2 className={`text-xl font-bold mb-4 text-black ${isPixelMode ? 'uppercase font-silkscreen' : ''}`}>
+      Create Vote Proposal
+    </h2>
+    
+    <form onSubmit={handleSubmit}>
+      {/* 제목 입력 */}
+      <div className="mb-4">
+        <label className={`block mb-2 text-black ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium'}`}>
+          Title
+        </label>
+        <input 
+          type="text" 
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          className={`
+            w-full px-3 py-2 text-black
+            ${isPixelMode 
+              ? 'border-2 border-black font-silkscreen' 
+              : 'border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700'}
+          `}
+          required
+        />
+
+        {/* 투표 유형 선택 필드 */}
+<div className="mb-4">
+  <label className={`block mb-2 text-black ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium'}`}>
+    Proposal Type
+  </label>
+  <select
+    value={voteType}
+    onChange={(e) => setVoteType(Number(e.target.value))}
+    className={`
+      w-full px-3 py-2 text-black
+      ${isPixelMode 
+        ? 'border-2 border-black font-silkscreen' 
+        : 'border border-gray-300 dark:border-gray-600 rounded-md dark:bg-white'}
+    `}
+    required
+  >
+    <option value={0}>Time Limit</option>
+    <option value={1}>Base Fee</option>
+    <option value={2}>AI Moderation</option>
+  </select>
+</div>
+
+{/* 새 값 입력 필드 */}
+<div className="mb-4">
+  <label className={`block mb-2 text-black ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium'}`}>
+    New Value
+  </label>
+  <input
+    type="number"
+    value={newValue}
+    onChange={(e) => setNewValue(Number(e.target.value))}
+    className={`
+      w-full px-3 py-2 text-black
+      ${isPixelMode 
+        ? 'border-2 border-black font-silkscreen' 
+        : 'border border-gray-300 dark:border-gray-600 rounded-md dark:bg-white'}
+    `}
+    required
+  />
+  <p className="text-sm text-gray-500 mt-1">
+    {voteType === 0 && "Time limit in seconds"}
+    {voteType === 1 && "Base fee in lamports"}
+    {voteType === 2 && "AI moderation threshold (0-100)"}
+  </p>
+</div>
+
+
           </div>
           
           {/* 설명 입력 */}
           <div className="mb-4">
-            <label className={`block mb-2 ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
+            <label className={`block mb-2 text-black ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
               Description
             </label>
             <textarea 
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className={`
-                w-full px-3 py-2 min-h-[100px]
+                w-full px-3 py-2 text-black min-h-[100px]
                 ${isPixelMode 
                   ? 'border-2 border-black font-silkscreen' 
                   : 'border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white'}
@@ -1296,14 +1531,14 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
           
           {/* 투표 타입 선택 */}
           <div className="mb-4">
-            <label className={`block mb-2 ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
+            <label className={`block mb-2 text-black ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
               Vote Type
             </label>
             <select 
               value={voteType}
               onChange={(e) => setVoteType(Number(e.target.value))}
               className={`
-                w-full px-3 py-2
+                w-full px-3 py-2 text-black
                 ${isPixelMode 
                   ? 'border-2 border-black font-silkscreen' 
                   : 'border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white'}
@@ -1320,19 +1555,19 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
           
           {/* 옵션 입력 */}
           <div className="mb-4">
-            <label className={`block mb-2 ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
+            <label className={`block mb-2 text-black ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
               Options
             </label>
             
             {options.map((option, index) => (
-              <div key={index} className="flex mb-2 items-center">
+              <div key={`voting-option-${index}`} className="flex mb-2 items-center">
                 <input 
                   type="text" 
                   value={option}
                   onChange={(e) => handleOptionChange(index, e.target.value)}
                   placeholder={`Option ${index + 1}`}
                   className={`
-                    flex-grow px-3 py-2
+                    flex-grow px-3 py-2 text-black
                     ${isPixelMode 
                       ? 'border-2 border-black font-silkscreen' 
                       : 'border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white'}
@@ -1343,7 +1578,7 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
                   type="button"
                   onClick={() => handleRemoveOption(index)}
                   className={`
-                    ml-2 p-2
+                    ml-2 p-2 
                     ${isPixelMode 
                       ? 'border-2 border-black bg-red-500 text-white' 
                       : 'bg-red-500 text-white rounded-md'}
@@ -1360,7 +1595,7 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
               type="button"
               onClick={handleAddOption}
               className={`
-                mt-2 px-4 py-1
+                mt-2 px-4 py-1 
                 ${isPixelMode 
                   ? 'border-2 border-black bg-blue-500 hover:bg-blue-600 text-white font-silkscreen uppercase' 
                   : 'bg-blue-600 hover:bg-blue-700 text-white rounded-md'}
@@ -1372,14 +1607,14 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
           
           {/* 투표 기간 선택 */}
           <div className="mb-4">
-            <label className={`block mb-2 ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
+            <label className={`block mb-2 text-black ${isPixelMode ? 'font-silkscreen uppercase' : 'font-medium text-gray-700 dark:text-gray-300'}`}>
               Voting Period
             </label>
             <select 
               value={votingPeriod}
               onChange={(e) => setVotingPeriod(Number(e.target.value))}
               className={`
-                w-full px-3 py-2
+                w-full px-3 py-2 text-black
                 ${isPixelMode 
                   ? 'border-2 border-black font-silkscreen' 
                   : 'border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white'}
@@ -1399,7 +1634,7 @@ const VotingModal = ({ isOpen, onClose, onSubmit, isPixelMode }) => {
             <button 
               type="button"
               onClick={onClose}
-              className={`
+              className={`text-black
                 ${isPixelMode 
                   ? 'border-2 border-black bg-gray-200 hover:bg-gray-300 px-4 py-2 font-silkscreen uppercase' 
                   : 'bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md text-gray-800'}
@@ -1555,7 +1790,7 @@ const ProposalDetailModal = ({
             const isWinningOption = isEnded && index === winningOptionIndex && totalVotes > 0;
             
             return (
-              <div key={index} className="mb-3">
+              <div  key={`option-${index}`} className="mb-3">
                 <div className="flex justify-between mb-1">
                   <div className="flex items-center">
                     {!hasVoted && !isEnded && (
@@ -2181,7 +2416,7 @@ const ProposalDetailModal = ({
 
                          return (
                            <div 
-                             key={proposal.proposal_id}
+                             key={proposal.id}
                              onClick={() => setSelectedProposal(proposal)}
                              className={`
                                cursor-pointer
@@ -2192,26 +2427,28 @@ const ProposalDetailModal = ({
                                p-4 transition-all duration-200
                              `}
                            >
-                             <div className="flex justify-between items-start mb-3">
-                               <div>
-                                 <h3 className={`font-medium ${isPixelMode ? 'font-silkscreen text-blue-600' : 'text-blue-600 dark:text-blue-400'}`}>
-                                   {proposal.title}
-                                 </h3>
-                                 <span className={`text-xs ${isPixelMode ? 'font-silkscreen text-gray-600' : 'text-gray-500 dark:text-gray-400'}`}>
-                                   by {proposal.proposer.slice(0, 4)}...{proposal.proposer.slice(-4)}
-                                 </span>
-                               </div>
-                               <div className={`
-                                 px-2 py-1 text-xs
-                                 ${isPixelMode ? 'border-2 border-black' : 'rounded-full'}
-                                 ${isActive 
-                                   ? isPixelMode ? 'bg-green-100 text-green-700' : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' 
-                                   : isPixelMode ? 'bg-red-100 text-red-700' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                                 }
-                               `}>
-                                 {isActive ? "Active" : "Ended"}
-                               </div>
-                             </div>
+
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <h3 className={`font-medium ${isPixelMode ? 'font-silkscreen text-blue-600' : 'text-blue-600 dark:text-blue-400'}`}>
+                                  {proposal.title || `Proposal #${proposal.id}`}
+                                </h3>
+                                <span className={`text-xs ${isPixelMode ? 'font-silkscreen text-gray-600' : 'text-gray-500 dark:text-gray-400'}`}>
+                                  Proposal #{proposal.id}
+                                </span>
+                              </div>
+                              <div className={`
+                                px-2 py-1 text-xs
+                                ${isPixelMode ? 'border-2 border-black' : 'rounded-full'}
+                                ${isActive 
+                                  ? isPixelMode ? 'bg-green-100 text-green-700' : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' 
+                                  : isPixelMode ? 'bg-red-100 text-red-700' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                                }
+                              `}>
+                                {isActive ? "Active" : "Ended"}
+                              </div>
+                            </div>
+
                                
                              <div className={`mb-3 ${isPixelMode ? 'font-silkscreen text-sm' : ''}`}>
                                <p className="line-clamp-2">
@@ -2227,7 +2464,7 @@ const ProposalDetailModal = ({
                                
                              <div className="flex justify-between items-center text-xs">
                                <div className={`${isPixelMode ? 'font-silkscreen' : 'text-gray-600 dark:text-gray-400'}`}>
-                                 <span>{proposal.votes.length} votes</span>
+                                 <span>{(proposal.yes_votes || 0) + (proposal.no_votes || 0)} votes</span>
                                  {" • "}
                                  <span>{startDate} - {endDate}</span>
                                </div>
