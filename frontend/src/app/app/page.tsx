@@ -110,98 +110,136 @@ export default function AppPage() {
     }
   }, [connected]);
 
-// 커뮤니티 데이터 가공
-// 커뮤니티 데이터 가공
-const communitiesWithDetails = useMemo(() => {
-  return pdas.map((pda, index) => {
-    const community = communities[index] || {};
-    const communityInfo = communityInfoMap[pda] || {};
-    const depositors = depositorsMap[pda] || [];
-    
-    // Lamports를 SOL로 변환
-    const totalLamportsFromAPI = community.total_deposit || 0;
-    
-    // 예치자 정보에서 직접 합산
-    const totalLamportsFromDepositors = depositors.reduce((sum, depositor) => {
-      return sum + (depositor.amount || 0);
-    }, 0);
-
-    const totalLamports = totalLamportsFromDepositors > 0 ? 
-      totalLamportsFromDepositors : totalLamportsFromAPI;
-    const bountyAmount = totalLamports / LAMPORTS_PER_SOL;
-    
-    // 시간 제한을 분 단위로 변환 (초 -> 분)
-    const timeLimit = community.time_limit ? Math.round(community.time_limit / 60) : 30;
-
-    
-    // 기본 수수료를 SOL로 변환
-    const baseFee = (community.base_fee || 0) / LAMPORTS_PER_SOL;
-
-    let lastActivityTime = null;
-    let lastActivityTimeFormatted = "Never";
-    
-    if (community.last_activity_timestamp && !isNaN(Number(community.last_activity_timestamp))) {
-      const timestamp = Number(community.last_activity_timestamp);
-      lastActivityTime = new Date(timestamp * 1000); // 초 단위를 밀리초로 변환
+  const communitiesWithDetails = useMemo(() => {
+    return pdas.map((pda, index) => {
+      const community = communities[index] || {};
+      const communityInfo = communityInfoMap[pda] || {};
+      const depositors = depositorsMap[pda] || [];
       
-      // 날짜 포맷팅 (예: "Mar 9, 2025, 4:01 PM")
-      lastActivityTimeFormatted = new Intl.DateTimeFormat('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      }).format(lastActivityTime);
-    }
-
-    
-    // 타임스탬프 안전하게 처리
-    let createdAt;
-    try {
-      // 타임스탬프가 존재하고 유효한 숫자인지 확인
-      const timestamp = community.last_activity_timestamp;
-      if (timestamp && !isNaN(Number(timestamp))) {
-        // 솔라나 타임스탬프는 초 단위이므로 밀리초로 변환
-        const date = new Date(Number(timestamp) * 1000);
+      // Lamports를 SOL로 변환
+      const totalLamportsFromAPI = community.total_deposit || 0;
+      
+      // 예치자 정보에서 직접 합산
+      const totalLamportsFromDepositors = depositors.reduce((sum, depositor) => {
+        return sum + (depositor.amount || 0);
+      }, 0);
+  
+      const totalLamports = totalLamportsFromDepositors > 0 ? 
+        totalLamportsFromDepositors : totalLamportsFromAPI;
+      const bountyAmount = totalLamports / LAMPORTS_PER_SOL;
+      
+      // 시간 제한 초 단위로 저장 (원본 값)
+      const timeLimitSeconds = community.time_limit || 108000; // 기본값 30시간(108000초)
+      
+      // 시간 제한을 분 단위로 변환 (초 -> 분) - 표시용
+      const timeLimitMinutes = Math.round(timeLimitSeconds / 60);
+      
+      // 기본 수수료를 SOL로 변환
+      const baseFee = (community.base_fee || 0) / LAMPORTS_PER_SOL;
+  
+      let lastActivityTime = null;
+      let lastActivityTimeFormatted = "Never";
+      let expirationTime = null;
+      let expirationTimeFormatted = "Unknown";
+      let timeRemaining = "";
+      let isExpired = false;
+      
+      if (community.last_activity_timestamp && !isNaN(Number(community.last_activity_timestamp))) {
+        const timestamp = Number(community.last_activity_timestamp);
+        lastActivityTime = new Date(timestamp * 1000); // 초 단위를 밀리초로 변환
         
-        // 유효한 날짜인지 확인 (Invalid Date 체크)
-        if (!isNaN(date.getTime())) {
-          createdAt = date.toISOString();
+        // 날짜 포맷팅 (예: "Mar 9, 2025, 4:01 PM")
+        lastActivityTimeFormatted = new Intl.DateTimeFormat('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }).format(lastActivityTime);
+        
+        // 종료 시간 계산 (마지막 활동 시간 + time_limit)
+        expirationTime = new Date((timestamp + timeLimitSeconds) * 1000);
+        
+        expirationTimeFormatted = new Intl.DateTimeFormat('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }).format(expirationTime);
+        
+        // 현재 시간과 종료 시간 비교하여 남은 시간 계산
+        const now = new Date();
+        const diffInSeconds = Math.floor((expirationTime - now) / 1000);
+        
+        if (diffInSeconds <= 0) {
+          isExpired = true;
+          timeRemaining = "Expired";
         } else {
-          // 유효하지 않은 날짜면 현재 시간 사용
+          // 남은 시간 계산 (일, 시간, 분)
+          const days = Math.floor(diffInSeconds / 86400);
+          const hours = Math.floor((diffInSeconds % 86400) / 3600);
+          const minutes = Math.floor((diffInSeconds % 3600) / 60);
+          
+          if (days > 0) {
+            timeRemaining = `${days}d ${hours}h remaining`;
+          } else if (hours > 0) {
+            timeRemaining = `${hours}h ${minutes}m remaining`;
+          } else {
+            timeRemaining = `${minutes}m remaining`;
+          }
+        }
+      }
+      
+      // 타임스탬프 안전하게 처리
+      let createdAt;
+      try {
+        // 타임스탬프가 존재하고 유효한 숫자인지 확인
+        const timestamp = community.last_activity_timestamp;
+        if (timestamp && !isNaN(Number(timestamp))) {
+          // 솔라나 타임스탬프는 초 단위이므로 밀리초로 변환
+          const date = new Date(Number(timestamp) * 1000);
+          
+          // 유효한 날짜인지 확인 (Invalid Date 체크)
+          if (!isNaN(date.getTime())) {
+            createdAt = date.toISOString();
+          } else {
+            // 유효하지 않은 날짜면 현재 시간 사용
+            createdAt = new Date().toISOString();
+          }
+        } else {
+          // 타임스탬프가 없으면 현재 시간 사용
           createdAt = new Date().toISOString();
         }
-      } else {
-        // 타임스탬프가 없으면 현재 시간 사용
+      } catch (err) {
+        console.error('Invalid timestamp:', community.last_activity_timestamp, err);
         createdAt = new Date().toISOString();
       }
-    } catch (err) {
-      console.error('Invalid timestamp:', community.last_activity_timestamp, err);
-      createdAt = new Date().toISOString();
-    }
-
-    return {
-      id: pda,
-      pda: pda,
-      name: communityInfo.name || `Community ${pda}`,
-      description: communityInfo.description || `A community on the Solana blockchain`,
-      bountyAmount,
-      gradient: `bg-gradient-to-r from-${getRandomColor()}-400 to-${getRandomColor()}-500`,
-      timeLimit: `${timeLimit} minutes`,
-      baseFee,
-      createdAt,
-      lastActivityTime,
-      lastActivityTimeFormatted,
-      popularity: community.depositor_count || 0,
-      admin: community.admin
-    };
-
-
-  });
-}, [pdas, communities, communityInfoMap, depositorsMap]);
-
-
+  
+      return {
+        id: pda,
+        pda: pda,
+        name: communityInfo.name || `Community ${pda}`,
+        description: communityInfo.description || `A community on the Solana blockchain`,
+        bountyAmount,
+        gradient: `bg-gradient-to-r from-${getRandomColor()}-400 to-${getRandomColor()}-500`,
+        timeLimit: `${timeLimitMinutes} minutes`,
+        baseFee,
+        createdAt,
+        lastActivityTime,
+        lastActivityTimeFormatted,
+        expirationTime,
+        expirationTimeFormatted,
+        timeRemaining,
+        isExpired,
+        popularity: community.depositor_count || 0,
+        admin: community.admin
+      };
+    });
+  }, [pdas, communities, communityInfoMap, depositorsMap]);
+  
 
   // 랜덤 색상 생성 함수
   function getRandomColor() {
@@ -243,17 +281,20 @@ const communitiesWithDetails = useMemo(() => {
   const handleCloseModal = () => {
     setShowCreateModal(false);
   };
+
   const handleCreateCommunitySubmit = async (communityData) => {
     // 실제 구현에서는 API를 호출하여 커뮤니티 생성
     console.log("Creating community:", communityData);
     
     // 커뮤니티 생성 후 데이터 다시 로드
     try {
-      const pdasData = await fetchAllPDAs();
-      setPdas(pdasData);
+      const pdasResponse = await fetchAllPDAs();
+      // 여기를 수정: 객체에서 pdas 배열을 추출
+      setPdas(pdasResponse.pdas || []);
       
-      const communitiesData = await fetchAllCommunities();
-      setCommunities(communitiesData);
+      const communitiesResponse = await fetchAllCommunities();
+      // 여기도 수정: 객체에서 communities 배열을 추출
+      setCommunities(communitiesResponse.communities || []);
       
       setShowCreateModal(false);
     } catch (err) {
@@ -261,6 +302,9 @@ const communitiesWithDetails = useMemo(() => {
       // 에러 처리 로직 추가
     }
   };
+
+  
+  
 
   const handleDepositToCommunity = (e, communityId) => {
     e.stopPropagation();
@@ -419,22 +463,27 @@ const communitiesWithDetails = useMemo(() => {
           {filteredAndSortedCommunities.length > 0 && (
             <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 ${isPixelMode ? 'gap-y-8' : ''}`}>
                 {filteredAndSortedCommunities
-                  .slice((currentPage - 1) * communitiesPerPage, currentPage * communitiesPerPage)
-                  .map((community) => (
-                  <Link href={`/app/community/${community.id}`} key={community.id}>
-                    <div className="cursor-pointer h-full">
-                      <CommunityCard
-                        name={community.name}
-                        description={community.description}
-                        bountyAmount={community.bountyAmount}
-                        gradient={community.gradient}
-                        isPixelMode={isPixelMode}
-                        lastActivityTimeFormatted={community.lastActivityTimeFormatted} // 이 줄 추가
-                        onDeposit={(e) => handleDepositToCommunity(e, community.id)}
-                      />
-                    </div>
-                  </Link>
-                  ))}
+                .slice((currentPage - 1) * communitiesPerPage, currentPage * communitiesPerPage)
+                .map((community) => (
+                <Link href={`/app/community/${community.id}`} key={community.id}>
+                  <div className="cursor-pointer h-full">
+                    <CommunityCard
+                      name={community.name}
+                      description={community.description}
+                      bountyAmount={community.bountyAmount}
+                      gradient={community.gradient}
+                      isPixelMode={isPixelMode}
+                      lastActivityTimeFormatted={community.lastActivityTimeFormatted}
+                      timeRemaining={community.timeRemaining}
+                      isExpired={community.isExpired}
+                      expirationTime={community.expirationTime} // 이 줄 추가
+                      onDeposit={(e) => handleDepositToCommunity(e, community.id)}
+                    />
+                  </div>
+                </Link>
+              ))}
+              
+
             </div>
           )}
           
@@ -472,23 +521,28 @@ const communitiesWithDetails = useMemo(() => {
             {joinedCommunities.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 
-                {filteredAndSortedCommunities
-                  .slice((currentPage - 1) * communitiesPerPage, currentPage * communitiesPerPage)
-                  .map((community) => (
-                  <Link href={`/app/community/${community.id}`} key={community.id}>
-                    <div className="cursor-pointer h-full">
-                      <CommunityCard
-                        name={community.name}
-                        description={community.description}
-                        bountyAmount={community.bountyAmount}
-                        gradient={community.gradient}
-                        isPixelMode={isPixelMode}
-                        lastActivityTimeFormatted={community.lastActivityTimeFormatted} // 이 줄 추가
-                        onDeposit={(e) => handleDepositToCommunity(e, community.id)}
-                      />
-                    </div>
-                  </Link>
-                ))}
+                  {filteredAndSortedCommunities
+                    .slice((currentPage - 1) * communitiesPerPage, currentPage * communitiesPerPage)
+                    .map((community) => (
+                    <Link href={`/app/community/${community.id}`} key={community.id}>
+                      <div className="cursor-pointer h-full">
+                        <CommunityCard
+                          name={community.name}
+                          description={community.description}
+                          bountyAmount={community.bountyAmount}
+                          gradient={community.gradient}
+                          isPixelMode={isPixelMode}
+                          lastActivityTimeFormatted={community.lastActivityTimeFormatted}
+                          timeRemaining={community.timeRemaining}
+                          isExpired={community.isExpired}
+                          expirationTime={community.expirationTime} // 이 줄 추가
+                          onDeposit={(e) => handleDepositToCommunity(e, community.id)}
+                        />
+                      </div>
+                    </Link>
+                  ))}
+
+
 
 
               </div>
